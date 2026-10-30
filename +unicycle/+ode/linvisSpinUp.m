@@ -21,7 +21,8 @@ function [v,info] = linvisSpinUp(lin,event,tSince)
 % INPUT:
 %   lin    - structure from unicycle.ode.linvisAssemble
 %   event  - structure with Trec, dtau (2Nc x 1) and optionally slipC
-%            (Nc x 2), e.g. unicycle.ode.periodicEvent(lin,Trec,weightC)
+%            (Nc x 2) and slipP (Np x 2; if given, sum must be Vpl Trec on
+%            pinned patches), e.g. unicycle.ode.periodicEvent(lin,Trec,weightC)
 %   tSince - (optional) time since the last event at which to return the
 %            slip rate, 0 <= tSince <= Trec [Trec, just before the next event]
 %
@@ -36,34 +37,26 @@ function [v,info] = linvisSpinUp(lin,event,tSince)
 %          spectralRadius - max |exp(λ Trec)|, the per-cycle contraction
 %                        of the cycle map (< 1)
 %
-% SEE ALSO: unicycle.ode.linvisAssemble, unicycle.ode.linvisEvolve,
+% SEE ALSO: unicycle.ode.linvisSpinUpSequence (sequences of events),
+%           unicycle.ode.linvisAssemble, unicycle.ode.linvisEvolve,
 %           unicycle.ode.periodicEvent
 
-Nc = lin.Nc;
+% the single-event case of unicycle.ode.linvisSpinUpSequence; the locked
+% slip budget is checked when event.slipP is given
+assert(isscalar(event),'linvisSpinUp: one event (use linvisSpinUpSequence for a sequence)')
 Trec = event.Trec;
 if nargin < 3 || isempty(tSince), tSince = Trec; end
 assert(tSince >= 0 && tSince <= Trec,'linvisSpinUp: tSince must be in [0, Trec]')
-slipC = zeros(Nc,2);
-if isfield(event,'slipC') && ~isempty(event.slipC)
-    slipC = event.slipC;
-end
-
-% modal coordinates of the velocity jump and the periodic pre-event state.
-% e^{λT} - 1 is evaluated without cancellation: for large η (λT -> 0) both
-% b and 1 - e^{λT} vanish like 1/η and their ratio tends to the finite
-% limit -K_cc⁻¹Δτ/T (steady creep at Vpl)
-bm = lin.Vinv*(event.dtau(:)./lin.d);
-z = lin.lambda*Trec;
-em1 = unicycle.ode.linvisExpm1(z);
-eT = 1 + em1;
-pm = -eT./em1.*bm;
-
-info.vPre = lin.vStar + real(lin.V*pm);
-info.vPost = info.vPre + event.dtau(:)./lin.d;
-[v,s] = unicycle.ode.linvisEvolve(lin,info.vPost,tSince);
-[~,sT] = unicycle.ode.linvisEvolve(lin,info.vPost,Trec);
-info.slipCycle = [sT(1:Nc),sT(Nc+1:end)] + slipC;
-info.slipSince = [s(1:Nc),s(Nc+1:end)] + slipC;
-info.spectralRadius = max(abs(eT));
+ev = struct('t',0,'dtau',event.dtau,'slipP',[],'slipC',[]);
+hasP = isfield(event,'slipP') && ~isempty(event.slipP);
+if hasP, ev.slipP = event.slipP; end
+if isfield(event,'slipC'), ev.slipC = event.slipC; end
+[v,infoS] = unicycle.ode.linvisSpinUpSequence(lin,struct('T',Trec,'events',ev),tSince,...
+    struct('checkBudget',hasP));
+info.vPre = infoS.vPre;
+info.vPost = infoS.vPost;
+info.slipCycle = infoS.slipCycle;
+info.slipSince = reshape(infoS.slip,[],2);
+info.spectralRadius = infoS.spectralRadius;
 
 end

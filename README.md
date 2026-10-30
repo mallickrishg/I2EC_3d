@@ -55,7 +55,7 @@ On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cy
 | Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
 | Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)` |
 | Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
-| Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
+| Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, info] = unicycle.ode.linvisSpinUpSequence(lin, seq, tOut)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
 | Surface stations | `G = unicycle.greens.computeSurfaceKernels(rcv, xObs)` once, then `[vSurf, uSurf] = unicycle.ode.surfaceDeformation(G, sys, t, Y, opts)` |
 
 The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`):
@@ -100,13 +100,18 @@ o    = struct('removeLongTerm',true,'pinnedSlip',out.event.slipP);
 
 ## Linear viscous friction (analytic)
 
-With `τ = τ0 + η v` on creeping patches (isotropic η per patch, MPa·s/m), the cycle ODE is linear, `v̇ = D⁻¹(K_cc v + τ̇_load)`, and is solved in closed form from the eigendecomposition of `A = D⁻¹K_cc`. That includes the exact periodic cycle for a characteristic event: no time stepping, no spin-up loop. The slip per cycle is Vpl·Trec for any η, so only transients constrain η. This is the forward model for inverting effective viscosity structure; see Task 9 in tasks.md.
+With `τ = τ0 + η v` on creeping patches (isotropic η per patch, MPa·s/m), the cycle ODE is linear, `v̇ = D⁻¹(K_cc v + τ̇_load)`, and is solved in closed form from the eigendecomposition of `A = D⁻¹K_cc`. That includes the exact periodic cycle for a characteristic event, or for any sequence of events that repeats every supercycle T: no time stepping, no spin-up loop. A sequence must release the slip deficit of the locked patches (Σ slip_P = Vpl·T, checked); events may rupture locked and creeping patches. The slip per cycle is Vpl·Trec for any η, so only transients constrain η. This is the forward model for inverting effective viscosity structure; see Task 9 in tasks.md.
 
 ```matlab
 lin   = unicycle.ode.linvisAssemble(rcv,bigK,eta);      % eta: scalar, Nc x 1 or N x 1
 event = unicycle.ode.periodicEvent(lin,Trec);
 [vNow,info] = unicycle.ode.linvisSpinUp(lin,event,tSince);   % exact periodic state
 [v,s] = unicycle.ode.linvisEvolve(lin,info.vPost,t);          % 2Nc x nt, closed form
+
+% sequence of events (slip on any patches, N x 2), repeating every T
+events(1) = unicycle.ode.sequenceEvent(lin,0,slip1);
+events(2) = unicycle.ode.sequenceEvent(lin,t2,slip2);
+[v,info] = unicycle.ode.linvisSpinUpSequence(lin,struct('T',T,'events',events),tOut);
 ```
 
 ## Modelling choices
@@ -132,6 +137,8 @@ event = unicycle.ode.periodicEvent(lin,Trec);
     surfaceDeformation.m         surface velocity and displacement time series
     linvisAssemble.m, linvisEvolve.m, linvisEvent.m, linvisSpinUp.m, linvisExpm1.m
                                  linear viscous friction: closed-form evolution and exact periodic cycle
+    linvisSpinUpSequence.m, sequenceEvent.m
+                                 exact periodic cycle for a repeating sequence of events
     odeLinearViscous.m, linvisSpinUpNumerical.m
                                  linear viscous ODE and time-stepped spin-up, to verify the closed form
     periodicEvent.m              characteristic event that closes the locked slip budget
