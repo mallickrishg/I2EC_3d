@@ -1,6 +1,6 @@
 # I2EC_3d: imposed earthquake cycles on a 3D fault
 
-MATLAB code for earthquake-cycle models in which earthquakes are **imposed** periodically on a locked part of a 3D triangular fault mesh, and the rest of the fault **creeps** according to rate-strengthening friction. It follows the approach of [seqeas](https://github.com/tobiscode/seqeas-public), extended to 3D with two-component (strike and dip) slip. It is built on the unicycle library, included under `+unicycle/`.
+MATLAB code for earthquake-cycle models in which earthquakes are **imposed** periodically on a locked part of a 3D triangular fault mesh, and the rest of the fault **creeps** according to rate-strengthening friction. It follows the approach of [seqeas](https://github.com/tobiscode/seqeas-public), extended to 3D with two-component (strike and dip) slip. It is built on the [unicycle](https://bitbucket.org/sbarbot/unicycle/src/master/) library, included under `+unicycle/`.
 
 The model:
 - **Elasticity:** traction kernels between triangular patches in a half-space (Nikkhoo & Walter 2015), `τ̇ = K (v − Vpl)`, with `v = 0` on locked patches between events.
