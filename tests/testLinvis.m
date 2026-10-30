@@ -60,7 +60,8 @@ end
 
 function testEvolveMatchesOde45(testCase)
 % the analytic slip rate and slip match a numerical solution of
-% v̇ = D⁻¹(K v + τ̇_load), ṡ = v, for heterogeneous eta
+% v̇ = D⁻¹(K v + τ̇_load), ṡ = v (unicycle.ode.odeLinearViscous), for
+% heterogeneous eta
 yr = testCase.TestData.yr;
 rcv = meshReceiver(testCase,true);
 lin = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,1);
@@ -69,10 +70,10 @@ n = 2*lin.Nc;
 v0 = lin.vStar + 3*rcv.Vpl*cos((1:n)');
 t = [0,logspace(-3,3,30)]'*yr;
 [v,s] = unicycle.ode.linvisEvolve(lin,v0,t);
-rhs = @(t,y) [(lin.Kcc*y(1:n) + lin.taudotLoad)./lin.d;y(1:n)];
-[~,Y] = ode45(rhs,t,[v0;zeros(n,1)],odeset('RelTol',1e-11,'AbsTol',1e-14));
-verifyEqual(testCase,v',Y(:,1:n),'AbsTol',1e-7*rcv.Vpl)
-verifyEqual(testCase,s',Y(:,n+1:end),'AbsTol',1e-7*rcv.Vpl*t(end))
+rhs = @(t,y) unicycle.ode.odeLinearViscous(t,y,lin);
+[~,Y] = ode45(rhs,t,[zeros(n,1);v0],odeset('RelTol',1e-11,'AbsTol',1e-14));
+verifyEqual(testCase,v',Y(:,n+1:end),'AbsTol',1e-7*rcv.Vpl)
+verifyEqual(testCase,s',Y(:,1:n),'AbsTol',1e-7*rcv.Vpl*t(end))
 % t = 0 returns the initial condition exactly
 verifyEqual(testCase,v(:,1),v0,'AbsTol',1e-12*max(abs(v0)))
 verifyEqual(testCase,s(:,1),zeros(n,1))
@@ -193,4 +194,89 @@ event = unicycle.ode.periodicEvent(lin,Trec);
 verifyEqual(testCase,v,lin.vStar,'AbsTol',1e-9*rcv.Vpl)
 verifyEqual(testCase,info.vPre,lin.vStar,'AbsTol',1e-9*rcv.Vpl)
 verifyEqual(testCase,info.slipCycle(:),VplC*Trec,'AbsTol',1e-6*rcv.Vpl*Trec)
+end
+
+function testAnalyticSpinUpMatchesNumericalSpinUp(testCase)
+% the closed-form periodic cycle equals the cycle obtained by time stepping
+% (event + ode45 over Trec, repeated until periodic), for heterogeneous
+% eta, with and without coseismic slip on creeping patches, and for a
+% slowly relaxing (high-eta) case that needs many cycles
+yr = testCase.TestData.yr;
+rcv = meshReceiver(testCase,true);
+lin0 = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,1);
+etaH = heterogeneousEta(testCase,rcv,lin0);
+Trec = 50*yr;
+Vpl = rcv.Vpl;
+cases = {etaH,0; etaH,linspace(0,0.4,lin0.Nc)'; 30*etaH,0};
+for k = 1:size(cases,1)
+    lin = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,cases{k,1});
+    event = unicycle.ode.periodicEvent(lin,Trec,cases{k,2});
+    [~,infoA] = unicycle.ode.linvisSpinUp(lin,event);
+    [vPreN,infoN] = unicycle.ode.linvisSpinUpNumerical(lin,event);
+    verifyTrue(testCase,infoN.converged)
+    verifyEqual(testCase,vPreN,infoA.vPre,'AbsTol',1e-7*Vpl)
+    verifyEqual(testCase,infoN.vPost,infoA.vPost,'AbsTol',1e-7*Vpl)
+    verifyEqual(testCase,infoN.slipCycle,infoA.slipCycle,'AbsTol',1e-7*Vpl*Trec)
+    % the whole periodic cycle, not just its end points
+    t = [0,logspace(-3,log10(Trec/yr),40)]'*yr;
+    n = 2*lin.Nc;
+    [vA,sA] = unicycle.ode.linvisEvolve(lin,infoA.vPost,t);
+    [~,Y] = ode45(@(t,y) unicycle.ode.odeLinearViscous(t,y,lin),t,[zeros(n,1);infoN.vPost],...
+        odeset('RelTol',1e-10,'AbsTol',1e-14));
+    verifyEqual(testCase,Y(:,n+1:end)',vA,'AbsTol',1e-7*Vpl)
+    verifyEqual(testCase,Y(:,1:n)',sA,'AbsTol',1e-7*Vpl*Trec)
+end
+end
+
+function testExtendedRuptureAnalyticMatchesNumerical(testCase)
+% rupture 20 % larger in area than the locked zone: uniform slip Vpl Trec
+% on the locked patches, half of that on the creeping patches inside the
+% extension (the nearest creeping patches, until their area reaches 20 %
+% of the locked area). The closed-form periodic cycle must match the
+% numerically spun-up one, and the slip budget still closes
+yr = testCase.TestData.yr;
+rcv = meshReceiver(testCase,true);
+lin0 = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,1);
+Trec = 50*yr;
+Vpl = rcv.Vpl;
+iC = lin0.iC;
+iP = lin0.iP;
+% creeping patches nearest the locked zone
+dmin = min(sqrt(sum((permute(rcv.xc(iC,:),[1,3,2]) - permute(rcv.xc(iP,:),[3,1,2])).^2,3)),[],2);
+[~,order] = sort(dmin);
+areaC = rcv.area(iC);
+nExt = find(cumsum(areaC(order)) >= 0.2*sum(rcv.area(iP)),1);
+weightC = zeros(lin0.Nc,1);
+weightC(order(1:nExt)) = 0.5;
+verifyEqual(testCase,sum(areaC(weightC > 0))/sum(rcv.area(iP)),0.2,'AbsTol',0.1)
+for etaCase = {heterogeneousEta(testCase,rcv,lin0),10*heterogeneousEta(testCase,rcv,lin0)}
+    lin = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,etaCase{1});
+    event = unicycle.ode.periodicEvent(lin,Trec,weightC);
+    verifyEqual(testCase,hypot(event.slipP(:,1),event.slipP(:,2)),Vpl*Trec*ones(numel(iP),1),'RelTol',1e-12)
+    verifyEqual(testCase,hypot(event.slipC(weightC > 0,1),event.slipC(weightC > 0,2)),...
+        0.5*Vpl*Trec*ones(nExt,1),'RelTol',1e-12)
+    % slip on the extension lowers its traction along the slip direction
+    % relative to a rupture confined to the locked zone (with half the slip,
+    % loading by the adjacent locked-zone slip can still win on some patches)
+    event0 = unicycle.ode.periodicEvent(lin,Trec);
+    ext = find(weightC > 0);
+    slipDir = lin.Vpl(iC(ext),:)./Vpl;
+    par = @(dtau) sum([dtau(ext),dtau(lin.Nc + ext)].*slipDir,2);
+    verifyLessThan(testCase,par(event.dtau) - par(event0.dtau),0)
+
+    [~,infoA] = unicycle.ode.linvisSpinUp(lin,event);
+    [vPreN,infoN] = unicycle.ode.linvisSpinUpNumerical(lin,event);
+    verifyTrue(testCase,infoN.converged)
+    verifyEqual(testCase,vPreN,infoA.vPre,'AbsTol',1e-7*Vpl)
+    verifyEqual(testCase,infoN.vPost,infoA.vPost,'AbsTol',1e-7*Vpl)
+    verifyEqual(testCase,infoN.slipCycle,infoA.slipCycle,'AbsTol',1e-7*Vpl*Trec)
+    verifyEqual(testCase,infoA.slipCycle,lin.Vpl(iC,:)*Trec,'AbsTol',1e-9*Vpl*Trec)
+    t = [0,logspace(-3,log10(Trec/yr),40)]'*yr;
+    n = 2*lin.Nc;
+    [vA,sA] = unicycle.ode.linvisEvolve(lin,infoA.vPost,t);
+    [~,Y] = ode45(@(t,y) unicycle.ode.odeLinearViscous(t,y,lin),t,[event.slipC(:);infoN.vPost],...
+        odeset('RelTol',1e-10,'AbsTol',1e-14));
+    verifyEqual(testCase,Y(:,n+1:end)',vA,'AbsTol',1e-7*Vpl)
+    verifyEqual(testCase,Y(:,1:n)',sA + event.slipC(:),'AbsTol',1e-7*Vpl*Trec)
+end
 end

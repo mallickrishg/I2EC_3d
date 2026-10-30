@@ -132,6 +132,8 @@ event = unicycle.ode.periodicEvent(lin,Trec);
     surfaceDeformation.m         surface velocity and displacement time series
     linvisAssemble.m, linvisEvolve.m, linvisEvent.m, linvisSpinUp.m, linvisExpm1.m
                                  linear viscous friction: closed-form evolution and exact periodic cycle
+    odeLinearViscous.m, linvisSpinUpNumerical.m
+                                 linear viscous ODE and time-stepped spin-up, to verify the closed form
     periodicEvent.m              characteristic event that closes the locked slip budget
     spinUp.m, runCycles.m        spin-up to the periodic cycle
   (rest of unicycle: geometry, Green's functions, utilities)
@@ -164,7 +166,7 @@ Meshes:
 /Applications/MATLAB_R2025a.app/bin/matlab -batch "run('tests/runAllTests.m')"
 ```
 
-69 tests cover:
+71 tests cover:
 - sign and axis conventions;
 - kernel caching;
 - the friction laws and the damped inverse;
@@ -174,6 +176,6 @@ Meshes:
 - imposed events (traction balance, reversal, stress-drop solve);
 - cycle spin-up (slip-budget closure, independence of the starting state);
 - surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity);
-- the analytic linear viscous model (against `ode45`, the iterated cycle map and the slip budget).
+- the analytic linear viscous model (against `ode45`, a numerically spun-up cycle, the iterated cycle map and the slip budget).
 
 The suite takes about a minute.

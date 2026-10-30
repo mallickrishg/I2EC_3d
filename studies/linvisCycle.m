@@ -66,6 +66,27 @@ for k = 1:2
     fprintf('%s: assemble %.2f s, spin-up + %d output times %.3f s, cond(V) %.0f, spectral radius %.3f, slip/(Vpl T) in [%.6f, %.6f], min v.vplhat %.2g Vpl\n',...
         names{k},tA,numel(tR),tS,lin.condV,info.spectralRadius,min(budget),max(budget),...
         min(sum(reshape(v(:,end),[],2).*lin.Vpl(iC,:),2)./sum(lin.Vpl(iC,:).^2,2)))
+    % check against a numerically spun-up cycle (event + ode45, repeated)
+    tic
+    [vPreN,infoN] = unicycle.ode.linvisSpinUpNumerical(lin,event);
+    fprintf('   numerical spin-up: %d cycles in %.1f s; max |v_pre - analytic| %.1e Vpl, max |slip/cycle - analytic| %.1e Vpl*T\n',...
+        infoN.nCycles,toc,max(abs(vPreN - info.vPre))/rcv.Vpl,max(abs(infoN.slipCycle(:) - info.slipCycle(:)))/(rcv.Vpl*Trec))
+    % rupture 20 % larger than the locked zone (20 km along strike on each
+    % side), Vpl Trec on the locked patches and half of it on the extension
+    inExt = false(rcv.N,1);
+    inExt(rectangularAsperity(rcv,aspX + 20e3*[-1,1],aspW,dip)) = true;
+    wC = 0.5*double(inExt(iC));
+    eventX = unicycle.ode.periodicEvent(lin,Trec,wC);
+    ext = find(wC > 0);
+    dpar = sum([eventX.dtau(ext),eventX.dtau(Nc + ext)].*lin.Vpl(iC(ext),:),2)/rcv.Vpl;
+    [~,infoX] = unicycle.ode.linvisSpinUp(lin,eventX);
+    [vPreX,infoXN] = unicycle.ode.linvisSpinUpNumerical(lin,eventX);
+    fprintf(['   extended rupture (%d creeping patches, %.0f%% of locked area, Δτ along slip on them in [%.2f, %.2f] MPa): ',...
+        'numerical %d cycles; max |v_pre diff| %.1e Vpl, max |slip/cycle diff| %.1e Vpl*T, slip/(Vpl T) in [%.6f, %.6f]\n'],...
+        numel(ext),100*sum(rcv.area(iC(ext)))/sum(rcv.area(lin.iP)),min(dpar),max(dpar),infoXN.nCycles,...
+        max(abs(vPreX - infoX.vPre))/rcv.Vpl,max(abs(infoXN.slipCycle(:) - infoX.slipCycle(:)))/(rcv.Vpl*Trec),...
+        min(hypot(infoX.slipCycle(:,1),infoX.slipCycle(:,2)))/(rcv.Vpl*Trec),...
+        max(hypot(infoX.slipCycle(:,1),infoX.slipCycle(:,2)))/(rcv.Vpl*Trec))
     L{k} = struct('lin',lin,'info',info,'v',v,'s',s,'event',event);
 end
 
