@@ -4,25 +4,10 @@ function out = runCycles(sys,event,opts)
 %
 %   out = unicycle.ode.runCycles(sys,event,opts)
 %
-% Each cycle: apply the event to the pre-event state
-% (unicycle.ode.applyEvent), integrate the creeping patches for Trec with
-% ode45, and compare with the previous cycle. The slip state is reset at
-% the start of every cycle, so its value at the end is the slip of that
-% cycle (coseismic + interseismic).
-%
-% Slip budget: the traction change on creeping patches over one cycle is
-%   ΔT = Δτ_event + K_cc Δs_inter + τ̇_load Trec
-% so a periodic cycle (ΔT = 0) has a unique slip per cycle
-%   Δs* = slip_C - K_cc \ (Δτ_event + τ̇_load Trec)
-% With the pinned patches slipping Vpl Trec in every event
-% (unicycle.ode.periodicEvent) this is exactly Δs* = Vpl Trec on every
-% creeping patch: the slip budget closes everywhere. The cycle is
-% converged when
-%   max |Δs_c - Δs*| / (|Vpl| Trec)  < opts.tolSlip
-%   max |Δzeta| between successive pre-event states < opts.tolZeta
-%   max |Δrake| between successive pre-event states < opts.tolRake (deg)
-% for opts.nConverged cycles in a row. The rake converges slowest, on the
-% time scale |τ|/(k Vpl) (~1e4 yr for f0 = 0.6, a-b = 0.005).
+% Runs unicycle.ode.spinUp (see there for the cycle loop, the slip budget
+% and the convergence criteria) and then integrates one more cycle from
+% the periodic pre-event state with output times. Use spinUp directly when
+% only the spun-up initial condition is needed.
 %
 % INPUT:
 %   sys   - structure from unicycle.ode.assembleODE
@@ -44,6 +29,8 @@ function out = runCycles(sys,event,opts)
 %                        cycle [161]
 %           tFirst     - first output time after the event (s) [1e-8 yr]
 %           verbose    - print progress every this many cycles [50], 0 = off
+%           (y0, maxCycles, tol*, nConverged, odeOpts, verbose are passed
+%           to unicycle.ode.spinUp)
 %
 % OUTPUT: structure out with
 %   converged, nCycles
@@ -57,109 +44,37 @@ function out = runCycles(sys,event,opts)
 %   slipTarget - (Nc x 2) slip per cycle of the periodic solution, Δs*
 %   event    - the event structure
 %
-% SEE ALSO: unicycle.ode.periodicEvent, unicycle.ode.applyEvent,
+% SEE ALSO: unicycle.ode.spinUp, unicycle.ode.periodicEvent, unicycle.ode.applyEvent,
 %           unicycle.ode.odeRateDependent
 
 if nargin < 3, opts = struct(); end
 yr = 3.1536e7;
-def = struct('y0',[],'maxCycles',2000,'tolSlip',1e-3,'tolZeta',1e-3,'tolRake',1e-3,...
-    'nConverged',3,'odeOpts',odeset('RelTol',1e-8,'AbsTol',1e-8),'nOut',161,...
-    'tFirst',1e-8*yr,'verbose',50);
-names = fieldnames(def);
-for k = 1:numel(names)
-    if ~isfield(opts,names{k}) || isempty(opts.(names{k}))
-        opts.(names{k}) = def.(names{k});
-    end
-end
-
+if ~isfield(opts,'nOut') || isempty(opts.nOut), opts.nOut = 161; end
+if ~isfield(opts,'tFirst') || isempty(opts.tFirst), opts.tFirst = 1e-8*yr; end
 Nc = sys.Nc;
 Trec = event.Trec;
-if isempty(opts.y0)
-    opts.y0 = sys.y0;
+
+spinOpts = rmfield(opts,intersect(fieldnames(opts),{'nOut','tFirst','tSince'}));
+spinOpts.keepStates = true;
+[~,info] = unicycle.ode.spinUp(sys,event,spinOpts);
+if ~isfield(opts,'odeOpts') || isempty(opts.odeOpts)
+    opts.odeOpts = odeset('RelTol',1e-8,'AbsTol',1e-8);
 end
 
-% the locked region must release Vpl Trec in every event
-if isfield(sys,'iP') && ~isempty(sys.iP)
-    budget = sys.Vpl(sys.iP,:)*Trec;
-    if max(abs(event.slipP(:) - budget(:))) > 1e-9*max(abs(budget(:)))
-        warning('unicycle:ode:runCycles:lockedBudget',...
-            'runCycles: event slip on pinned patches differs from Vpl Trec; the slip budget of the locked region does not close')
-    end
-end
-if ~isfield(event,'slipC') || isempty(event.slipC)
-    event.slipC = zeros(Nc,2);
-end
-
-% slip per cycle of the periodic solution
-sTarget = event.slipC(:) - sys.Kcc \ (event.dtau(:) + sys.taudotLoad*Trec);
-sTarget = [sTarget(1:Nc),sTarget(Nc+1:end)];
-VplMag = hypot(sys.Vpl(sys.iC,1),sys.Vpl(sys.iC,2))*Trec;
-rhs = @(t,y) unicycle.ode.odeRateDependent(t,y,sys);
-iZ = 2*Nc+1:3*Nc;
-iT = 3*Nc+1:4*Nc;
-
-y = opts.y0(:);
-y(1:2*Nc) = 0;
-yStart = zeros(4*Nc,opts.maxCycles+1);
-yStart(:,1) = y;
-H = zeros(opts.maxCycles,6);
-nOk = 0;
-converged = false;
-for k = 1:opts.maxCycles
-    tic
-    yMinus = y;
-    yPlus = unicycle.ode.applyEvent(sys,yMinus,event.dtau,event.slipC);
-    Tm = unicycle.ode.stateTraction(sys,yMinus);
-    Tp = unicycle.ode.stateTraction(sys,yPlus);
-    [~,Y] = ode45(rhs,[0,Trec/2,Trec],yPlus,opts.odeOpts);
-    yEnd = Y(end,:)';
-
-    ds = [yEnd(1:Nc),yEnd(Nc+1:2*Nc)];
-    slipErr = max(hypot(ds(:,1) - sTarget(:,1),ds(:,2) - sTarget(:,2))./VplMag);
-    dzeta = max(abs(yEnd(iZ) - yMinus(iZ)));
-    drake = max(abs(rad2deg(angle(exp(1i*(yEnd(iT) - yMinus(iT)))))));
-    H(k,:) = [slipErr,dzeta,drake,min(hypot(Tp(:,1),Tp(:,2))),sum(sum(Tp.*Tm,2) < 0),toc];
-
-    y = yEnd;
-    y(1:2*Nc) = 0;
-    y(iT) = angle(exp(1i*y(iT)));
-    yStart(:,k+1) = y;
-
-    if slipErr < opts.tolSlip && dzeta < opts.tolZeta && drake < opts.tolRake
-        nOk = nOk + 1;
-    else
-        nOk = 0;
-    end
-    if opts.verbose > 0 && (mod(k,opts.verbose) == 0 || k == 1 || nOk >= opts.nConverged)
-        fprintf('cycle %4d: slip err %.2e, dzeta %.2e, drake %.2e deg, min|T+| %.3g MPa, %d reversed, %.2f s\n',...
-            k,H(k,1),H(k,2),H(k,3),H(k,4),H(k,5),H(k,6))
-    end
-    if nOk >= opts.nConverged
-        converged = true;
-        break
-    end
-end
-nCycles = k;
-if ~converged
-    warning('unicycle:ode:runCycles:notConverged',...
-        'runCycles: not periodic after %d cycles (slip err %.2e, dzeta %.2e, drake %.2e deg)',...
-        nCycles,H(k,1),H(k,2),H(k,3))
-end
-
-% store one full cycle from the final pre-event state
+% store one full cycle from the periodic pre-event state
 tout = [0,logspace(log10(opts.tFirst),log10(Trec),opts.nOut)];
-yPlus = unicycle.ode.applyEvent(sys,y,event.dtau,event.slipC);
-[t,Y] = ode45(rhs,tout,yPlus,opts.odeOpts);
+yPlus = unicycle.ode.applyEvent(sys,info.yPre,info.event.dtau,info.event.slipC);
+[t,Y] = ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys),tout,yPlus,opts.odeOpts);
 
-out.converged = converged;
-out.nCycles = nCycles;
-out.history = array2table(H(1:nCycles,:),'VariableNames',...
-    {'slipErr','dzeta','drakeDeg','minTplus','nReversed','runtime'});
-out.yStart = yStart(:,1:nCycles+1);
+out.converged = info.converged;
+out.nCycles = info.nCycles;
+out.history = info.history;
+out.contraction = info.contraction;
+out.yStart = info.yStart;
 out.t = t;
 out.y = Y;
 out.slipCycle = [Y(end,1:Nc)',Y(end,Nc+1:2*Nc)'];
-out.slipTarget = sTarget;
-out.event = event;
+out.slipTarget = info.slipTarget;
+out.event = info.event;
 
 end

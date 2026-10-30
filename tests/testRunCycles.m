@@ -86,5 +86,55 @@ sys = meshSystem(testCase,0.6);
 event = unicycle.ode.periodicEvent(sys,100*testCase.TestData.yr);
 event.slipP = 0.9*event.slipP;
 verifyWarning(testCase,@() unicycle.ode.runCycles(sys,event,struct('maxCycles',1,'verbose',0)),...
-    'unicycle:ode:runCycles:lockedBudget')
+    'unicycle:ode:spinUp:lockedBudget')
+end
+
+function testSpinUpMatchesRunCycles(testCase)
+% spinUp returns the periodic pre-event state, or the state a time tSince
+% into the periodic cycle, consistent with the cycle stored by runCycles
+yr = testCase.TestData.yr;
+sys = meshSystem(testCase,0.1);
+Nc = sys.Nc;
+Trec = 50*yr;
+event = unicycle.ode.periodicEvent(sys,Trec);
+opts = struct('maxCycles',500,'verbose',0);
+out = unicycle.ode.runCycles(sys,event,opts);
+[y,info] = unicycle.ode.spinUp(sys,event,opts);
+verifyTrue(testCase,info.converged)
+verifyEqual(testCase,info.nCycles,out.nCycles)
+verifyEqual(testCase,y,out.yStart(:,end),'AbsTol',1e-12)
+verifyEqual(testCase,y(1:2*Nc),zeros(2*Nc,1))
+% part way through the cycle
+k = find(out.t > 3*yr,1);
+opts.tSince = out.t(k);
+[y,info] = unicycle.ode.spinUp(sys,event,opts);
+verifyEqual(testCase,y(2*Nc+1:end),out.y(k,2*Nc+1:end)','AbsTol',1e-6)
+verifyEqual(testCase,info.slipSince(:),out.y(k,1:2*Nc)','AbsTol',1e-6*max(abs(out.y(k,1:2*Nc))))
+verifyEqual(testCase,y(1:2*Nc),zeros(2*Nc,1))
+% right after the event
+opts.tSince = 0;
+y = unicycle.ode.spinUp(sys,event,opts);
+verifyEqual(testCase,y(2*Nc+1:end),out.y(1,2*Nc+1:end)','AbsTol',1e-12)
+end
+
+function testSpinUpIsIndependentOfStart(testCase)
+% the cycle map is contractive: starting from v = Vpl at the plate rake or
+% from the locked-asperity steady state gives the same primed state
+sys = meshSystem(testCase,0.1);
+Nc = sys.Nc;
+event = unicycle.ode.periodicEvent(sys,50*testCase.TestData.yr);
+opts = struct('maxCycles',1000,'verbose',0,'tolSlip',1e-7,'tolZeta',1e-7,'tolRake',1e-6);
+[y1,info1] = unicycle.ode.spinUp(sys,event,opts);
+opts.y0 = unicycle.ode.steadyState(sys);
+[y2,info2] = unicycle.ode.spinUp(sys,event,opts);
+verifyTrue(testCase,info1.converged && info2.converged)
+verifyLessThan(testCase,[info1.contraction,info2.contraction],1)
+verifyEqual(testCase,y1(2*Nc+1:3*Nc),y2(2*Nc+1:3*Nc),'AbsTol',1e-5)
+verifyEqual(testCase,angle(exp(1i*(y1(3*Nc+1:end) - y2(3*Nc+1:end)))),zeros(Nc,1),'AbsTol',1e-5)
+end
+
+function testSpinUpRejectsPhaseOutsideCycle(testCase)
+sys = meshSystem(testCase,0.6);
+event = unicycle.ode.periodicEvent(sys,100*testCase.TestData.yr);
+verifyError(testCase,@() unicycle.ode.spinUp(sys,event,struct('tSince',2*event.Trec,'verbose',0)),?MException)
 end

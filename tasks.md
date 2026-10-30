@@ -87,7 +87,8 @@ steady-state rate-dependent friction.
 | `unicycle.ode.eventStressChange(sys,Trec,weight,weightC)` | coseismic slip `weight·Vpl·Trec` on pinned patches (and `weightC·Vpl·Trec` on creeping patches inside the rupture); `Δτ = K_cp slip_P + K_cc slip_C` |
 | `unicycle.ode.ruptureSlipForStressChange(sys,Trec,inRuptureC,dtauTarget,direction)` | slip on creeping patches inside the rupture that gives each of them a prescribed Δτ·d (e.g. a 3 MPa stress drop) |
 | `unicycle.ode.periodicEvent(sys,Trec,weightC)` | event that releases exactly Vpl·Trec on the locked patches (closes their slip budget), plus optional slip on creeping rupture patches |
-| `unicycle.ode.runCycles(sys,event,opts)` | spin-up: event + `ode45` over Trec per cycle until periodic (slip per cycle = Δs*, ζ and rake repeat); stores one full cycle |
+| `unicycle.ode.spinUp(sys,event,opts)` | spin-up only: repeats the characteristic event until the cycle is periodic and returns the primed state a time `tSince` after the last event (default: just before the next one), plus convergence info |
+| `unicycle.ode.runCycles(sys,event,opts)` | `spinUp` + one stored full cycle with output times |
 | `unicycle.ode.stateTraction(sys,y)` | traction vector implied by the state, `|T| = F(v) + ηv` along θ |
 | `unicycle.ode.applyEvent(sys,y,dtau,slipC)` | coseismic state jump `T⁺ = T⁻ + Δτ`, damped inverse for v⁺, θ⁺ from T⁺; adds `slipC` to the slip state |
 | `unicycle.ode.odeRateDependent(t,y,sys)` | ODE right-hand side |
@@ -96,7 +97,7 @@ steady-state rate-dependent friction.
 
 `+unicycle/Contents.m` lists an older `unicycle/ode/*` (evolution, rateandstate, …) that is not in this copy, so there are no name clashes.
 
-**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 52 tests and all pass; the run takes about 1 min.
+**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 55 tests and all pass; the run takes about 1 min.
 
 | file | covers |
 |---|---|
@@ -105,7 +106,7 @@ steady-state rate-dependent friction.
 | `testFrictionLaw` | log law; asinh = log for realistic f0/(a−b); asinh regularization at low v; derivative; inverse round trip; no overflow; damped inverse |
 | `testAssembleODE` | partitioning; scalar expansion; Vpl/Vrake components; loading `K(v−Vpl)` with `v_p = 0`; steady state; `y0`; validation and warning |
 | `testImposedEvent` | `Kcp` partition; `Δτ` matches the full kernel and is linear in the weight; nearest neighbours loaded in the slip direction; `applyEvent` ∘ `stateTraction` is the identity for Δτ = 0; traction balance and direction after rotating/amplifying/reducing steps; damping caps v⁺; spring-slider afterslip → Δτ/k; `steadyState` is a fixed point; log-law negative traction raises an error; rupture onto creeping patches (Δτ from the full kernel, stress drop, slip jump); traction reversal with asinh gives backward slip ∥ T⁺; slip solved for a prescribed stress change hits the target exactly |
-| `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close |
+| `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close ; `spinUp` matches the `runCycles` cycle at tSince = Trec, mid-cycle and 0; primed state independent of the starting state (contraction < 1); tSince outside [0, Trec] rejected |
 | `testOdeRateDependent` | projection formulas; f0-independent acceleration; `θ̇ ∝ 1/|τ|`; spring-slider logistic solution; rake relaxation `exp(−k Vpl t/|τ|)`; radiation damping; damped traction balance conserved; small mesh converges to BEM |
 
 Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` and `oneSliderSystem`.
@@ -215,7 +216,7 @@ Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` a
 
 ### 6. Cycle driver and spin-up — done
 - [x] Loop over cycles (`unicycle.ode.runCycles`): apply the event to the pre-event state, integrate Trec with `ode45`, repeat. The slip state is reset each cycle, so its end value is the slip of that cycle.
-- [x] **Slip budget.** `unicycle.ode.periodicEvent` makes the locked patches release exactly Vpl·Trec along the plate rake in every event (`runCycles` warns `unicycle:ode:runCycles:lockedBudget` otherwise). Over one cycle the creeping traction changes by `ΔT = Δτ_event + K_cc Δs_inter + τ̇_load Trec`, so the periodic cycle has a unique slip per cycle `Δs* = slip_C − K_cc \ (Δτ_event + τ̇_load Trec)`, which equals Vpl·Trec on every creeping patch when the locked budget closes (also with coseismic slip on creeping patches). The slip budget therefore closes everywhere once the cycle is periodic.
+- [x] **Slip budget.** `unicycle.ode.periodicEvent` makes the locked patches release exactly Vpl·Trec along the plate rake in every event (`spinUp` warns `unicycle:ode:spinUp:lockedBudget` otherwise). Over one cycle the creeping traction changes by `ΔT = Δτ_event + K_cc Δs_inter + τ̇_load Trec`, so the periodic cycle has a unique slip per cycle `Δs* = slip_C − K_cc \ (Δτ_event + τ̇_load Trec)`, which equals Vpl·Trec on every creeping patch when the locked budget closes (also with coseismic slip on creeping patches). The slip budget therefore closes everywhere once the cycle is periodic.
 - [x] Periodicity check, on successive pre-event states: `max |Δs − Δs*|/(Vpl Trec) < 1e-3`, `max |Δζ| < 1e-3`, `max |Δrake| < 1e-3°`, for 3 cycles in a row. Then one full cycle is stored (161 log-spaced outputs from 1e-8 yr to Trec).
 - [x] Study: `studies/cycleSpinup.m` (parameters `f0`, `ruptureExtend`, `dtauTarget`, `maxCycles`, `startFrom`) → `studies/output/cycleSpinup_f0_<f0>_ext<km>km[_drop3].{png,mat}`. Same setup as Task 5: `generic_sz15_dx20`, 200 × 100 km asperity, rake 68°, a−b = 0.005, v0 = Vpl, Trec = 150 yr (8.1 m per event), asinh.
 
@@ -231,11 +232,18 @@ Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` a
   - **The periodic cycle is not the BEM steady state.** With the asperity released every cycle, every creeping patch slips Vpl·Trec along (close to) the plate rake, whereas the steady state around a permanently locked asperity has rakes rotated by up to −58°/+34° and speeds 0.85–1.8 × v_ss. In the periodic cycle the rake stays within ±0.5° of 68° (f0 = 0.6) or within a few degrees except right after the event (f0 = 0.1, e.g. 84° → 68° at the west edge of the extended rupture). Hence the spin-up default is now `sys.y0` (v = Vpl at the plate rake), 1.4–2.5× fewer cycles than starting from the steady state; both reach the same periodic cycle.
   - **f0 = 0.1 is stable through the whole spin-up**, including the extended rupture with a 3 MPa drop: no reversals, min |T⁺| = 1.59 MPa (above the 1 MPa threshold), each cycle ~0.2 s.
   - Late-interseismic coupling (1 − |v|/Vpl just before the event) is high on the ring of creeping patches around the asperity and decays over ~100 km.
+- [x] **Spun-up initial condition** (`unicycle.ode.spinUp`). Idea: the largest (characteristic) earthquake dominates the relaxation of the system, so repeating it until periodic primes slip rates and tractions; the cycle map is contractive (creep diffuses the memory of the initial condition). Recorded instrumental-era events and creep are then imposed on this state with `applyEvent` and `odeRateDependent` using the same `sys`.
+  - Returns the state `tSince` after the last characteristic event (slip zeroed), `info.slipSince`, `info.yPre`, `info.history`, and `info.contraction` (geometric decrease of the slip error per cycle).
+  - 20 km mesh, rupture = asperity, Trec = 150 yr: contraction per cycle 0.79 (f0 = 0.1, 31 cycles) and 0.96 (f0 = 0.6, 78 cycles). Starting from the locked-asperity steady state instead gives the same primed state (at tSince = 120 yr: max Δζ 1e-5 / 2e-4, max Δrake 0.003° / 0.04° for f0 = 0.1 / 0.6) after 43 / 194 cycles.
+  - The stopping rule bounds the change per cycle, not the remaining error; with contraction r the remaining error is ≈ change·r/(1−r), i.e. ~25× the last change at f0 = 0.6. Tighten `tolRake`/`tolZeta` if the primed rake must be accurate to better than a few hundredths of a degree.
 - [ ] Save `t`, slip and velocity on **all** patches (pinned patches: v = 0 between events, coseismic slip at events) — move to Task 7 together with surface displacements.
 
 ### 7. Outputs
 - [ ] Surface displacements and velocities at observation points via `rcv.displacementKernels` (relative to Vpl, as in `BEM_interseismicsolve.m`).
 - [ ] Plots: map views of v/Vpl and rake at selected times, time series at selected patches, and the cumulative slip budget (total slip per cycle ≈ Vpl·T_rec everywhere).
+
+### 7b. Instrumental era
+- [ ] Driver that starts from `spinUp(..., tSince = time since the last characteristic event)` and imposes the recorded sequence: coseismic slip of recorded events via `applyEvent` (traction change from their slip distributions, which may include creeping patches), creep in between with `odeRateDependent`, loading continuing with the locked patches pinned.
 
 ### 8. Later / optional
 - [ ] Multiple asperities with different recurrence times and non-uniform coseismic slip.
