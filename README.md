@@ -55,6 +55,7 @@ On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cy
 | Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
 | Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)` |
 | Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
+| Surface stations | `G = unicycle.greens.computeSurfaceKernels(rcv, xObs)` once, then `[vSurf, uSurf] = unicycle.ode.surfaceDeformation(G, sys, t, Y, opts)` |
 
 The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`):
 
@@ -63,6 +64,21 @@ y = [slip_strike; slip_dip; zeta; theta]     zeta = log(|v|/v0), theta = rake (r
 ```
 
 Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (strike, dip). In `runCycles` output, `out.t` is the time since the event and `out.y` holds the state of one periodic cycle, with slip relative to the start of the cycle. Locked patches have `v = 0` between events and slip `out.event.slipP` at each event.
+
+### Surface time series
+
+```matlab
+xObs = [east, north, zeros(D,1)];                       % stations (m), same frame as rcv.xc
+G    = unicycle.greens.computeSurfaceKernels(rcv,xObs);  % (3D x 2N)
+o    = struct('removeLongTerm',true,'pinnedSlip',out.event.slipP);
+[vSurf,uSurf] = unicycle.ode.surfaceDeformation(G,sys,out.t,out.y,o);
+% vSurf (m/s), uSurf (m): nt x D x 3, components [east, north, up]
+```
+
+- `removeLongTerm` subtracts the deformation from steady slip at Vpl on the whole mesh, `G·Vpl` (and `G·Vpl·t` from the displacement), leaving the signal relative to the long-term motion.
+- `pinnedSlip` adds the coseismic slip of the locked patches, so the displacement includes the coseismic step at t = 0.
+- The displacement comes from the slip state, which `ode45` integrates exactly along with the slip rate, rather than from numerical quadrature of the velocity.
+- Keep stations off the fault trace, where the kernels are singular.
 
 ### Friction parameters to vary
 
@@ -92,6 +108,7 @@ Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (stri
 ```
 +unicycle/
   +greens/computeKernels.m       cached traction kernels with geometry check
+  +greens/computeSurfaceKernels.m  surface displacement kernels at stations
   +ode/                          imposed-earthquake-cycle machinery
     assembleODE.m                partition locked/creeping patches, loading, friction terms
     odeRateDependent.m           ODE right-hand side
@@ -100,6 +117,7 @@ Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (stri
     eventStressChange.m          coseismic slip and traction change
     ruptureSlipForStressChange.m slip on creeping rupture patches for a prescribed stress drop
     stateTraction.m, applyEvent.m      traction from state; coseismic state jump
+    surfaceDeformation.m         surface velocity and displacement time series
     periodicEvent.m              characteristic event that closes the locked slip budget
     spinUp.m, runCycles.m        spin-up to the periodic cycle
   (rest of unicycle: geometry, Green's functions, utilities)
@@ -122,6 +140,7 @@ Meshes:
 | `studies/postseismicExample.m` | one imposed event and 150 yr of postseismic response (`f0`, `ruptureExtend`, `dtauTarget`) |
 | `studies/postseismicCompare.m` | compares the `postseismicExample` cases |
 | `studies/cycleSpinup.m` | spin-up to the periodic cycle, slip budget and convergence figures |
+| `studies/surfaceTimeseries.m` | surface velocity and displacement over the periodic cycle along a trench-normal profile |
 | `studies/plotLockedAsperity.m` | plots the mesh and locked region |
 
 ## Tests
@@ -130,7 +149,7 @@ Meshes:
 /Applications/MATLAB_R2025a.app/bin/matlab -batch "run('tests/runAllTests.m')"
 ```
 
-55 tests cover:
+60 tests cover:
 - sign and axis conventions;
 - kernel caching;
 - the friction laws and the damped inverse;
@@ -138,6 +157,7 @@ Meshes:
 - spring-slider solutions of the ODE;
 - convergence to the boundary-element steady state;
 - imposed events (traction balance, reversal, stress-drop solve);
-- cycle spin-up (slip-budget closure, independence of the starting state).
+- cycle spin-up (slip-budget closure, independence of the starting state);
+- surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity).
 
 The suite takes about a minute.

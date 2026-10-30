@@ -89,6 +89,8 @@ steady-state rate-dependent friction.
 | `unicycle.ode.periodicEvent(sys,Trec,weightC)` | event that releases exactly Vpl·Trec on the locked patches (closes their slip budget), plus optional slip on creeping rupture patches |
 | `unicycle.ode.spinUp(sys,event,opts)` | spin-up only: repeats the characteristic event until the cycle is periodic and returns the primed state a time `tSince` after the last event (default: just before the next one), plus convergence info |
 | `unicycle.ode.runCycles(sys,event,opts)` | `spinUp` + one stored full cycle with output times |
+| `unicycle.greens.computeSurfaceKernels(rcv,xObs)` | surface displacement kernels at stations, (3D × 2N) |
+| `unicycle.ode.surfaceDeformation(G,sys,t,Y,opts)` | surface velocity and displacement time series, optionally relative to the long-term motion |
 | `unicycle.ode.stateTraction(sys,y)` | traction vector implied by the state, `|T| = F(v) + ηv` along θ |
 | `unicycle.ode.applyEvent(sys,y,dtau,slipC)` | coseismic state jump `T⁺ = T⁻ + Δτ`, damped inverse for v⁺, θ⁺ from T⁺; adds `slipC` to the slip state |
 | `unicycle.ode.odeRateDependent(t,y,sys)` | ODE right-hand side |
@@ -97,7 +99,7 @@ steady-state rate-dependent friction.
 
 `+unicycle/Contents.m` lists an older `unicycle/ode/*` (evolution, rateandstate, …) that is not in this copy, so there are no name clashes.
 
-**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 55 tests and all pass; the run takes about 1 min.
+**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 60 tests and all pass; the run takes about 1 min.
 
 | file | covers |
 |---|---|
@@ -107,6 +109,7 @@ steady-state rate-dependent friction.
 | `testAssembleODE` | partitioning; scalar expansion; Vpl/Vrake components; loading `K(v−Vpl)` with `v_p = 0`; steady state; `y0`; validation and warning |
 | `testImposedEvent` | `Kcp` partition; `Δτ` matches the full kernel and is linear in the weight; nearest neighbours loaded in the slip direction; `applyEvent` ∘ `stateTraction` is the identity for Δτ = 0; traction balance and direction after rotating/amplifying/reducing steps; damping caps v⁺; spring-slider afterslip → Δτ/k; `steadyState` is a fixed point; log-law negative traction raises an error; rupture onto creeping patches (Δτ from the full kernel, stress drop, slip jump); traction reversal with asinh gives backward slip ∥ T⁺; slip solved for a prescribed stress change hits the target exactly |
 | `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close ; `spinUp` matches the `runCycles` cycle at tSince = Trec, mid-cycle and 0; primed state independent of the starting state (contraction < 1); tSince outside [0, Trec] rejected |
+| `testSurfaceDeformation` | surface kernel layout and slip signs; long-term removal; back slip is landward; displacement = ∫ velocity; coseismic step |
 | `testOdeRateDependent` | projection formulas; f0-independent acceleration; `θ̇ ∝ 1/|τ|`; spring-slider logistic solution; rake relaxation `exp(−k Vpl t/|τ|)`; radiation damping; damped traction balance conserved; small mesh converges to BEM |
 
 Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` and `oneSliderSystem`.
@@ -239,7 +242,14 @@ Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` a
 - [ ] Save `t`, slip and velocity on **all** patches (pinned patches: v = 0 between events, coseismic slip at events) — move to Task 7 together with surface displacements.
 
 ### 7. Outputs
-- [ ] Surface displacements and velocities at observation points via `rcv.displacementKernels` (relative to Vpl, as in `BEM_interseismicsolve.m`).
+- [x] Surface velocity and displacement time series at stations.
+  - `G = unicycle.greens.computeSurfaceKernels(rcv,xObs)`: `rcv.displacementKernels(xObs,3)` as one (3D × 2N) matrix `[G_strike, G_dip]`, rows `[e1 n1 u1 e2 ...]`; xObs in `[east, north, up]` like `rcv.xc`.
+  - `[vSurf,uSurf] = unicycle.ode.surfaceDeformation(G,sys,t,Y,opts)`: velocity `G_C v_C(t)` (pinned patches v = 0), displacement `G_C slip_C(t) + G_P slip_P`, both (nt × D × 3) [east, north, up].
+    - The displacement is evaluated from the slip state, which `ode45` integrates together with ζ and θ, so it is the exact time integral of the velocity. A trapezoidal integral of the velocity is not reliable right after an event (v ~ 1e8 Vpl decaying within seconds): it was off by ~5 % on a grid starting at 1e-6 yr.
+    - `opts.removeLongTerm` subtracts `G Vpl` (and `G Vpl t`), giving the signal relative to the long-term motion, i.e. `G (v − Vpl)`.
+    - `opts.pinnedSlip` (e.g. `out.event.slipP`) adds the locked-zone coseismic slip; `opts.reference = 'first'` makes the displacement relative to the first time.
+  - Tests (`testSurfaceDeformation`): kernel layout, thrust moves the hanging wall toward the trench and up, positive strike slip moves it along the strike vector; steady sliding at Vpl is removed exactly by `removeLongTerm`; a station above a locked patch moves landward relative to the long-term motion (back slip); displacement = time integral of velocity after an event; coseismic step = G·slip.
+  - Study `studies/surfaceTimeseries.m` (trench-normal profile at east = −10 km, f0 = 0.1 and 0.6, periodic cycle): relative to the long-term motion the displacement is a sawtooth — a coseismic step (up to 3.6 m), fast postseismic transient over ~1–10 yr, then linear interseismic recovery — and returns to zero after one cycle to 2e-4 m (f0 = 0.6) / 3e-5 m (f0 = 0.1), i.e. the slip budget closes at the surface too. The two f0 give nearly identical surface signals (f0 mainly changes rake, which the surface sees only weakly). Stations exactly on the fault trace (north = 0) are singular; keep them off it.
 - [ ] Plots: map views of v/Vpl and rake at selected times, time series at selected patches, and the cumulative slip budget (total slip per cycle ≈ Vpl·T_rec everywhere).
 
 ### 7b. Instrumental era
