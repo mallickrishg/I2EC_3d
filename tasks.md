@@ -99,7 +99,7 @@ steady-state rate-dependent friction.
 
 `+unicycle/Contents.m` lists an older `unicycle/ode/*` (evolution, rateandstate, …) that is not in this copy, so there are no name clashes.
 
-**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 71 tests and all pass; the run takes about 1 min.
+**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 78 tests and all pass; the run takes about 1 min.
 
 | file | covers |
 |---|---|
@@ -111,6 +111,7 @@ steady-state rate-dependent friction.
 | `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close ; `spinUp` matches the `runCycles` cycle at tSince = Trec, mid-cycle and 0; primed state independent of the starting state (contraction < 1); tSince outside [0, Trec] rejected |
 | `testSurfaceDeformation` | surface kernel layout and slip signs; long-term removal; back slip is landward; displacement = ∫ velocity; coseismic step |
 | `testLinvis` | linear viscous model: partition and v* vs RSF set-up; eigendecomposition; analytic v, s vs ode45 of `odeLinearViscous`; closed-form periodic cycle vs numerically spun-up cycle; fixed point; η-time scaling; event jump; exact periodic state vs iterated cycle map; slip budget independent of η; surface output |
+| `testKLBasis` | KL basis: orthonormality (area weighted), covariance reconstruction, zero-mean modes, default ℓ, long-ℓ limits, Matérn forms, mesh independence, patch subsets |
 | `testOdeRateDependent` | projection formulas; f0-independent acceleration; `θ̇ ∝ 1/|τ|`; spring-slider logistic solution; rake relaxation `exp(−k Vpl t/|τ|)`; radiation damping; damped traction balance conserved; small mesh converges to BEM |
 
 Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` and `oneSliderSystem`.
@@ -312,7 +313,7 @@ Goal: an effective linear viscous friction law on creeping patches, so the cycle
   - The imaginary parts are negligible and V is well conditioned, so **eigendecomposition** is used (no symmetrization). `linvisAssemble` warns if Re λ ≥ 0 or cond(V) > 1e10.
   - With uniform η = (a−b)σ/Vpl ≈ 1.5e8 MPa·s/m, the relaxation times −1/Re λ span ~1–40 yr (0.6–37 yr on the 10 km mesh).
 - [x] 9.2 Forward model, analytic (`+unicycle/+ode/`, same conventions as the RSF code: [strike; dip] blocks on creeping patches):
-  - `lin = linvisAssemble(rcv,bigK,eta)`: partition (`iC`, `iP`, `Kcc`, `Kcp`, `taudotLoad`, `Vpl`, so `periodicEvent`/`eventStressChange`/`surfaceDeformation` accept `lin`), `vStar`, eigendecomposition of `A = D⁻¹K_cc`. η scalar, Nc × 1 or N × 1. Needs only `Vpl`, `Vrake`, `pinnedPosition` on `rcv`.
+  - `lin = linvisAssemble(rcv,bigK,eta)`: partition (`iC`, `iP`, `Kcc`, `Kcp`, `taudotLoad`, `Vpl`, so `periodicEvent`/`eventStressChange`/`surfaceDeformation` accept `lin`), `vStar`, eigendecomposition of `A = D⁻¹K_cc`. η scalar, Nc × 1 or N × 1. Needs only `Vpl`, `Vrake`, `pinnedPosition` on `rcv`. **Decision:** η is an argument of `linvisAssemble`, not a property on `rcv` (the receiver class has no viscosity property, and passing it keeps inversion loops over trial η simple). This is the one exception to the rule that physical properties live on the mesh object.
   - `[v,s] = linvisEvolve(lin,v0,t)`: `v = v* + V(e^{λt}.*c)`, `s = v* t + V((e^{λt}−1)./λ.*c)`, `c = V⁻¹(v0 − v*)`; `e^z − 1` evaluated as `2e^{z/2} sinh(z/2)` to avoid cancellation.
   - `v = linvisEvent(lin,v,dtau)`: `v + Δτ/η`.
   - `[v,info] = linvisSpinUp(lin,event,tSince)`: exact periodic cycle, `p_i = b_i e^{λ_i T}/(1 − e^{λ_i T})`; returns the slip rate at tSince, `vPre`, `vPost`, `slipCycle`, `slipSince`, and `spectralRadius` = max |e^{λT}|.
@@ -348,6 +349,102 @@ Goal: an effective linear viscous friction law on creeping patches, so the cycle
 
 **Open questions**
 - ~~Isotropic η or the RSF-derived tensor?~~ Isotropic (decided).
-- One D for the whole cycle, or different D for the postseismic and interseismic windows?
+- ~~One D for the whole cycle?~~ Different D per time window (decided, see Task 10).
 - ~~Parameterization of D~~: low-rank KL modes of a Matérn covariance on log η (decided). Still open: values of ℓ, ν, σ_m and r, and whether to estimate them.
 - Which data: GNSS displacement time series only, or also InSAR / long-term rates?
+
+### 10. Time-windowed effective viscosity: inversion design (planning)
+
+Idea: effective viscosity is not one constant. It is large during the late interseismic period and small right after an earthquake, increasing with time since the event. The plan is a piecewise-constant η in time, with slip rate continuous across window boundaries. Every window is solved with the Task 9 closed form.
+
+**Windows**
+- **W0, interseismic:** `η_0` (large), used in the exact spin-up (`linvisSpinUp`) with the characteristic event (Δτ_char, Trec). It gives the slip rate at `tSince` = time from the last characteristic event to the modern event. This is fitted to late-interseismic surface velocities (relative to long-term motion).
+- **Coseismic:** the slip-rate jump uses the late-interseismic slip rate from W0 and the coseismic traction change of the modern event, `Δτ_obs = K_cp slip_P + K_cc slip_C` (from its slip distribution, which may include creeping patches): `v(0⁺) = v_W0(tSince) + Δτ_obs/η_1`. The jump is divided by the viscosity of the **first postseismic window**, η_1.
+- **W1 … WK, postseismic:** windows `[t_{k−1}, t_k]` after the modern event (e.g. 0–1 month, 1–3 months, 3–12 months, 1–3 yr, …), each with its own `η_k`. Within a window, `v(t) = v* + V_k e^{Λ_k (t − t_{k−1})} V_k⁻¹ (v(t_{k−1}) − v*)`. The slip-rate field is continuous on the whole mesh at every boundary, `v(t_k⁻) = v(t_k⁺)`.
+- **Shared steady state:** `v* = −K_cc⁻¹τ̇_load` is the same for all windows (independent of η), so only the decaying part changes from window to window. Slip and surface displacement per window are closed form (`linvisEvolve`) and accumulate across windows; add the coseismic step `G_P slip_P + G_C slip_C`.
+
+**Physics notes**
+- Continuity of v across a change in η means the traction offset τ0 jumps (`τ0_k = τ − η_k v`). That is acceptable for an effective model: τ0 never enters the rate equation.
+- RSF tangent viscosity `η ≈ (a−b)σ/v` predicts exactly this behaviour: small η when v is high right after the event, growing as v decays, and largest late in the cycle. It could serve as a physics-based prior or consistency check: `η_k · v̄_k ≈` const (≈ (a−b)σ) on each patch.
+- **Interseismic η sets the late-interseismic coupling pattern.** Its limits (Task 9) are η → ∞, steady creep at Vpl around the locked zone (no stress shadow), and η → 0, the full stress shadow v* right after relaxation. The fitted η_0 places the late-interseismic state between these.
+- **η_0 is a target of the inversion, not a nuisance parameter (decided).** We do not observe a full earthquake cycle, only a quasi-steady late-interseismic velocity field. η_0 is defined as the effective viscosity that, used throughout a periodic characteristic cycle (`linvisSpinUp` with η_0 only), reproduces that quasi-steady state at `tSince`. It is a value we interpret, so the spin-up deliberately uses one η for the whole cycle rather than a window schedule.
+- **What η_0 can be identified against.** For uniform η the model has the scaling `v(η, Trec, tSince) = v(cη, cTrec, c·tSince)` (`testViscosityScalesTime`). So a single velocity snapshot constrains η_0 only relative to the assumed Trec and tSince: their values (paleoseismic/historical) must be fixed or carried as uncertain, and the reported η_0 is conditional on them. Spatial variations of η_0 (the KL modes) are constrained by the shape of the coupling pattern, between the limits v* (small η) and Vpl (large η).
+
+**Inverse problem**
+- **Unknowns:** log η per window as truncated KL fields (Task 9.5a), `m_k = m̄_k + Φ_r Λ_r^{1/2} c_k`, k = 0…K, with **r = 2–3 modes per window, including the interseismic window W0** (decided). The truncation is the regularization. W0 needs several modes because which parts of the mesh sit in the locked zone's stress shadow (small η, v → v*) and which are stiff enough to creep at full plate rate (large η, v → Vpl) is not known a priori. So the unknown vector is `[c_0; c_1; …; c_K]`, about 3(K+1) numbers; possibly tSince/Trec as well.
+- **Data:** late-interseismic GNSS velocities, which constrain η_0 through the spin-up (W0), and postseismic GNSS displacement time series (W1…WK), all relative to long-term motion. The W0 fit can be done first and on its own; it fixes the pre-event slip rate that the postseismic windows start from.
+- **Forward cost:** one eigendecomposition per window (0.7 s on the 20 km mesh, ~13 s on the 10 km mesh), then cheap closed-form propagation.
+- **Jacobian structure ("triangular in time").** Rows are grouped by data window, columns by the coefficient block c_k of each window. Data in window k depend on c_0…c_k (earlier windows enter through the slip rate carried across window edges and, for W1, through the pre-event rate and η_1 in the coseismic jump), but never on c_{k+1}…c_K. So `∂d_k/∂c_j = 0` for j > k and the Jacobian is block lower-triangular. In practice:
+  - perturbing c_k needs a new eigendecomposition for window k only, then re-propagation from window k onward; windows before k are unchanged;
+  - with ~3(K+1) unknowns, finite differences (or complex step) on c are affordable, and so is sampling (MCMC);
+  - a sequential fit (W0 alone, then W1 given W0, …) is a natural starting model for the joint inversion.
+- **Regularization:** spatial smoothness from the KL prior; in time, penalize differences of log η between consecutive windows, and optionally enforce η_1 ≤ η_2 ≤ … ≤ η_K ≤ η_0 (monotone increase).
+
+**Tasks**
+- [ ] 10.1 Forward chain: given (η_0, Δτ_char, Trec, tSince), (Δτ_obs, slip_C) and (η_1…η_K, window edges), return slip rate and slip on the fault and surface velocity/displacement at stations over all windows. Reuse `linvisAssemble`/`linvisSpinUp`/`linvisEvolve`/`linvisEvent`/`surfaceDeformation`; one `lin` per window, sharing kernels and v*.
+- [ ] 10.2 Tests: continuity of v at window edges; with all η_k equal, identical to a single `linvisEvolve`; each window matches `ode45` of `odeLinearViscous` with that window's η; slip and displacement accumulate correctly across windows.
+- [ ] 10.3 Synthetic test against RSF: generate postseismic time series with the asinh RSF model (Task 5 setup), fit η_k per window with the linear chain, and compare the fitted η_k with the RSF tangent `(a−b)σ/v̄_k`. How many windows does a log-like RSF decay need?
+- [ ] 10.3b Interseismic-only inversion (W0): fit η_0 (KL field) to late-interseismic velocities on synthetics; show the η_0–Trec–tSince trade-off and how well the spatial pattern of η_0 is recovered.
+- [ ] 10.4 Inversion prototype on synthetics with KL-parameterized η_k (Task 9.5a), including resolution/identifiability of each window's η.
+
+**Open questions**
+- Window edges: fixed and log-spaced in time since the event, or part of the inversion?
+- ~~Spin-up with η_0 only, or with a window schedule?~~ η_0 only: η_0 is the effective viscosity of the quasi-steady late-interseismic state and is itself a result (decided).
+- Trec and tSince for the characteristic event: fixed, or inverted with priors (η_0 trades off with them)?
+- Independent η fields per window (own c_k, r = 2–3 each), or a shared spatial pattern scaled per window? Current plan: independent c_k per window.
+- Does the modern event replace the characteristic event in the cycle (tSince measured from it afterwards), or is it superposed on the characteristic cycle?
+
+### 11. Inverse package: design (planning)
+
+**Location.** All inversion code goes in a new package folder **`+unicycle/+inverse/`** (decided), called as `unicycle.inverse.*`. **Plain functions, no classes (decided):** each function takes the objects and data it needs (`rcv`/`lin`, kernels, KL basis, data structure, windows) and returns plain structures. This follows the convention that machinery lives in `+unicycle` packages (ODE in `+ode`, kernels in `+greens`). The forward pieces it calls stay in `+ode` (linvis*, surfaceDeformation). Tests in `tests/` as for every module.
+
+**User-supplied**
+- Time windows: edges after the modern event (and tSince, Trec, Δτ_char for W0).
+- Data and their uncertainties (GNSS velocities for W0; displacement time series for W1…WK), station coordinates.
+- Optionally the correlation length ℓ and the KL kernel (Matérn ν; default ν = 1/2, exponential).
+
+**Data with gaps and mixed sampling**
+- Time series will have gaps and different sampling rates between stations (and possibly within a station). Store observations in long format, one row per observation: station index, component (E/N/U), time, value, σ (and optionally a data covariance per station). There is no common time grid: each station keeps its own times.
+- The forward model is closed form, so it is evaluated at exactly the observed times; no interpolation and no time stepping. Per window, collect the unique observation times in that window, evaluate slip there with `linvisEvolve`, and map to each station with its kernel rows.
+- Displacement time series have an arbitrary reference position per station and component, so add one offset per station-component as a nuisance parameter. It enters linearly and is eliminated by least squares inside the misfit (variable projection). If a station has equipment offsets or long gaps, allow one offset per segment.
+- Interseismic data (W0) are velocities, not positions, and need no offsets.
+- Windows contain whatever observations fall in them; a window with few or no data is simply less constrained (fewer modes selected, see below).
+
+**Parameters per window: r + 1 (decided)**
+- Each window k has **r_k + 1 unknowns**: the uniform level `m̄_k = log η̄_k` (log of a uniform viscosity) and r_k KL coefficients `c_k`, so `log η_k = m̄_k + Phi(:,1:r_k) c_k`. The KL modes are zero-mean (`klBasis` removes the mean), so they describe log-space spatial variations *about* the uniform viscosity, and m̄_k does not trade off with them.
+- **Workflow for every window:**
+  1. First estimate the best-fit **uniform** viscosity (r_k = 0, one parameter). This is a 1-D problem (a line search on log η̄), gives the starting model, and is the r = 0 baseline in the model selection.
+  2. Then estimate m̄_k **jointly** with the r_k mode coefficients (r_k + 1 parameters), starting from the uniform fit with c_k = 0. m̄_k is re-estimated, not held at the uniform value, because spatial variations change the best uniform level (in log space, its mean under the fitted pattern).
+- The mean sets the relaxation time scale and is the best-constrained number, so it is always a free parameter, not a prior mean.
+- KL modes `Φ_r` of the covariance `exp(−r_ij/ℓ)` (or Matérn) on creeping-patch centroids, normalized by `Λ_r^{1/2}`; computed once per (mesh, ℓ, ν) and cached.
+
+**Correlation length ℓ: one value for all windows (decided)**
+- ℓ only defines a common basis: the same KL modes `Φ` serve every window. Windows differ in how many of these nested modes they use and in their coefficients.
+- Default when not supplied: **ℓ = L/2**, with L the largest extent of the creeping-patch centroids. Use the largest principal extent (PCA of the centroids), so curved or rotated meshes work too. For the generic meshes that is ~500 km along strike → ℓ ≈ 250 km.
+- With only 2–3 modes, ℓ mainly sets the shape of those modes. For ℓ ≳ L the leading modes tend to a near-constant field and smooth gradients along the long and short dimensions, which is what "stress shadow near the asperity vs full plate rate far away" needs. For ℓ ≪ L the variance spreads over many modes and 2–3 modes capture little of the prior. So ℓ ~ L/2 is a sensible default.
+- Check the sensitivity by treating ℓ ∈ {L/4, L/2, L} as candidate models in the same information-criterion comparison as r.
+
+**Number of KL modes: information criterion**
+- For each candidate r (and ℓ), fit by least squares and compute `BIC = p ln n + χ²_min` (Gaussian errors, so −2 ln L̂ = χ² + const), with p the number of free parameters (means + modes over all windows, plus tSince/Trec if free) and n the number of data. Pick the minimum; also report AIC/AICc (less conservative, better for small n).
+- Search strategy: modes are nested (r = 0, 1, 2, 3 …), with r = 0 the uniform-viscosity model (1 parameter) and r modes giving r + 1 parameters per window. Select r_0 for W0 on the interseismic data alone, then r_k window by window given the earlier windows (the triangular structure), then a final joint fit. A full combinatorial search over all windows is not needed. The intended outcome: data-rich windows get more modes, poorly sampled windows fewer (down to r = 0, only the mean level).
+- Caveats: the criterion is only meaningful with realistic data uncertainties. GNSS time series have temporally correlated noise, so n overstates the independent information. Use a data covariance or an effective n (e.g. from the noise model), or confirm with cross-validation (leave stations out).
+
+**Tasks**
+- [x] 11.1 KL modes: `basis = unicycle.inverse.klBasis(rcv,iC,opts)`.
+  - Matérn covariance between centroids (ν = 0.5 exponential by default; 1.5, 2.5, Inf, or general ν via the Bessel form evaluated in log space), `σ_m` default 1.
+  - **Area-weighted** eigenproblem `C W φ = λ φ`, `φ' W φ = I` (the discretized integral operator), so modes and eigenvalues are nearly independent of mesh resolution (leading λ within 3 % between 10 km and 5 km meshes).
+  - **Mean removed by default:** the covariance is centred on the area-weighted mean, so every mode has zero mean and the mean level m̄ is a separate parameter (no trade-off with a near-constant first mode).
+  - Returns `Phi = φ diag(√λ)` (so `m = m̄ + Phi(:,1:r) c`, c ~ N(0, I)), `phi`, `lambda`, cumulative `varFraction`, `L` (largest principal extent of the centroids) and the options used. Default ℓ = L/2. Sign convention: largest-magnitude entry of each mode positive (signs can differ between meshes; irrelevant for the inversion).
+  - No caching: the dense eigendecomposition takes < 1 s for 650 patches and a few seconds for 2600, so it is recomputed.
+  - Tests (`testKLBasis`, 7): orthonormality, eigen-equation and exact covariance reconstruction; zero-mean modes; default ℓ = L/2; ℓ ≫ L gives a constant (uncentred) or linear-gradient (centred) leading mode; Matérn forms agree (including large ν without overflow); mesh independence; subset of patches.
+  - `studies/klModes.m` → `klModes.png`: on the creeping patches of the 20 km mesh (L ≈ 490 km), the leading modes are an along-strike gradient, an along-dip (shallow vs deep) gradient, centre vs ends along strike, and a quadrupole. Their shapes hardly change between ℓ = L/2 and L. The exponential kernel spreads variance slowly: 2 / 3 / 5 modes capture 42 / 50 / 61 % of the prior variance at ℓ = L/2 (30 / 37 / 48 % at L/4, 50 / 58 / 68 % at L). That is fine for a truncated basis, but a smoother kernel (ν = 1.5 or 2.5) would concentrate more variance in the first few modes.
+- [ ] 11.2 Data structure (long format, per-station times, σ, offsets per station-component/segment) and the window forward chain (Task 10.1) evaluated at the observed times.
+- [ ] 11.3 Misfit, Jacobian (finite differences on [m̄_k, c_k], exploiting the triangular structure), and a least-squares solver (Gauss–Newton / Levenberg–Marquardt); later MCMC.
+- [ ] 11.4 Model selection over r (and ℓ) with BIC/AIC, sequentially by window then jointly.
+- [ ] 11.5 Synthetic tests: recover known η fields (linear-model data), then RSF-generated data (Task 10.3).
+
+**Open questions**
+- ~~Class or plain functions?~~ Plain functions (decided).
+- ~~One ℓ for all windows?~~ One ℓ, a common basis (decided).
+- Default ℓ = L/2 from the mesh, or always user-supplied? Current plan: user value if given, else L/2.
+- Noise model for the time series (white σ only, or white + flicker/random-walk) and how to set the effective n in the information criterion.

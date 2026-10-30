@@ -136,6 +136,8 @@ event = unicycle.ode.periodicEvent(lin,Trec);
                                  linear viscous ODE and time-stepped spin-up, to verify the closed form
     periodicEvent.m              characteristic event that closes the locked slip budget
     spinUp.m, runCycles.m        spin-up to the periodic cycle
+  +inverse/                      inversion machinery (plain functions)
+    klBasis.m                    Karhunen-Loève basis of a Matérn covariance on patches (low-rank log-viscosity fields)
   (rest of unicycle: geometry, Green's functions, utilities)
 fault/                           meshes (.ned/.tri); make_fault_mesh.m writes the generic ones
 kernels/                         kernel cache (not tracked)
@@ -158,6 +160,7 @@ Meshes:
 | `studies/cycleSpinup.m` | spin-up to the periodic cycle, slip budget and convergence figures |
 | `studies/surfaceTimeseries.m` | surface velocity and displacement over the periodic cycle along a trench-normal profile |
 | `studies/linvisCycle.m` | analytic linear viscous cycle vs the RSF cycle |
+| `studies/klModes.m` | leading KL modes on the creeping patches for several correlation lengths |
 | `studies/plotLockedAsperity.m` | plots the mesh and locked region |
 
 ## Tests
@@ -166,7 +169,7 @@ Meshes:
 /Applications/MATLAB_R2025a.app/bin/matlab -batch "run('tests/runAllTests.m')"
 ```
 
-71 tests cover:
+78 tests cover:
 - sign and axis conventions;
 - kernel caching;
 - the friction laws and the damped inverse;
@@ -176,6 +179,7 @@ Meshes:
 - imposed events (traction balance, reversal, stress-drop solve);
 - cycle spin-up (slip-budget closure, independence of the starting state);
 - surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity);
-- the analytic linear viscous model (against `ode45`, a numerically spun-up cycle, the iterated cycle map and the slip budget).
+- the analytic linear viscous model (against `ode45`, a numerically spun-up cycle, the iterated cycle map and the slip budget);
+- the KL basis for low-rank viscosity fields.
 
 The suite takes about a minute.
