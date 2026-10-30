@@ -21,7 +21,10 @@ function sys = assembleODE(rcv,bigK,law)
 %
 % OUTPUT: structure sys with
 %   N,Nc,iC    - number of patches, number and index of creeping patches
+%   iP         - index of pinned patches
 %   Kcc        - (2Nc x 2Nc) kernel between creeping patches
+%   Kcp        - (2Nc x 2Np) traction on creeping patches due to slip on
+%                pinned patches, used for imposed events
 %   taudotLoad - (2Nc x 1) stressing rate on creeping patches due to
 %                loading at Vpl with pinned patches held at v = 0
 %   Vpl        - (N x 2) long-term [strike,dip] slip rate
@@ -34,7 +37,7 @@ function sys = assembleODE(rcv,bigK,law)
 % with zeta = log(|v|/v0) and theta the rake from the strike direction
 %
 % SEE ALSO: unicycle.ode.odeRateDependent, unicycle.greens.computeKernels,
-%           unicycle.ode.frictionLaw
+%           unicycle.ode.frictionLaw, unicycle.ode.eventStressChange
 
 if nargin < 3 || isempty(law), law = 'asinh'; end
 assert(any(strcmp(law,{'asinh','log'})),'assembleODE: law must be ''asinh'' or ''log''')
@@ -62,11 +65,13 @@ assert(any(p.Vpl > 0),'assembleODE: rcv.Vpl is zero everywhere')
 isPinned = false(N,1);
 isPinned(rcv.pinnedPosition) = true;
 iC = find(~isPinned);
+iP = find(isPinned);
 Nc = numel(iC);
 assert(all(p.a(iC) > p.b(iC)),'assembleODE: creeping patches must be velocity strengthening (a > b)')
 
 sys.N = N;
 sys.iC = iC;
+sys.iP = iP;
 sys.Nc = Nc;
 sys.law = law;
 
@@ -76,6 +81,7 @@ sys.Vpl = [p.Vpl.*cosd(p.Vrake),p.Vpl.*sind(p.Vrake)];
 % rows/columns of creeping patches in the 2N-sized system
 rowsC = [iC;N+iC];
 sys.Kcc = bigK(rowsC,rowsC);
+sys.Kcp = bigK(rowsC,[iP;N+iP]);
 
 % loading on creeping patches, τ̇ = K (v - Vpl), with v = 0 on pinned
 % patches:
