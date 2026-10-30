@@ -8,7 +8,7 @@ function event = sequenceEvent(sys,t,slip)
 % change on creeping patches is
 %   Δτ_c = K_cp slip_P + K_cc slip_C
 % as in unicycle.ode.eventStressChange. Collect the events of one
-% supercycle in a struct array for unicycle.ode.linvisSpinUpSequence.
+% supercycle in a struct array for unicycle.ode.linvisSpinUp.
 %
 % INPUT:
 %   sys  - structure from unicycle.ode.assembleODE or linvisAssemble
@@ -21,7 +21,7 @@ function event = sequenceEvent(sys,t,slip)
 %   dtau        - (2Nc x 1) traction change on creeping patches (MPa)
 %   slipP,slipC - (Np x 2), (Nc x 2) coseismic slip (m)
 %
-% SEE ALSO: unicycle.ode.linvisSpinUpSequence, unicycle.ode.eventStressChange
+% SEE ALSO: unicycle.ode.linvisSpinUp, unicycle.ode.eventStressChange
 
 N = numel(sys.iC) + numel(sys.iP);
 assert(isequal(size(slip),[N,2]),'sequenceEvent: slip must be N x 2')

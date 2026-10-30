@@ -55,7 +55,7 @@ On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cy
 | Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
 | Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)` |
 | Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
-| Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, info] = unicycle.ode.linvisSpinUpSequence(lin, seq, tOut)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
+| Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, seq, tOut)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
 | Surface stations | `G = unicycle.greens.computeSurfaceKernels(rcv, xObs)` once, then `[vSurf, uSurf] = unicycle.ode.surfaceDeformation(G, sys, t, Y, opts)` |
 
 The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`):
@@ -111,7 +111,7 @@ event = unicycle.ode.periodicEvent(lin,Trec);
 % sequence of events (slip on any patches, N x 2), repeating every T
 events(1) = unicycle.ode.sequenceEvent(lin,0,slip1);
 events(2) = unicycle.ode.sequenceEvent(lin,t2,slip2);
-[v,info] = unicycle.ode.linvisSpinUpSequence(lin,struct('T',T,'events',events),tOut);
+[v,info] = unicycle.ode.linvisSpinUp(lin,struct('T',T,'events',events),tOut);   % same function
 ```
 
 ## Modelling choices
@@ -137,8 +137,7 @@ events(2) = unicycle.ode.sequenceEvent(lin,t2,slip2);
     surfaceDeformation.m         surface velocity and displacement time series
     linvisAssemble.m, linvisEvolve.m, linvisEvent.m, linvisSpinUp.m, linvisExpm1.m
                                  linear viscous friction: closed-form evolution and exact periodic cycle
-    linvisSpinUpSequence.m, sequenceEvent.m
-                                 exact periodic cycle for a repeating sequence of events
+    sequenceEvent.m              one event of a sequence (linvisSpinUp also takes repeating sequences)
     odeLinearViscous.m, linvisSpinUpNumerical.m
                                  linear viscous ODE and time-stepped spin-up, to verify the closed form
     periodicEvent.m              characteristic event that closes the locked slip budget

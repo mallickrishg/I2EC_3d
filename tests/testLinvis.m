@@ -324,7 +324,7 @@ Vpl = rcv.Vpl;
 for etaCase = {heterogeneousEta(testCase,rcv,lin0),10*heterogeneousEta(testCase,rcv,lin0)}
     lin = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,etaCase{1});
     seq = mixedSequence(rcv,lin,T);
-    [~,infoA] = unicycle.ode.linvisSpinUpSequence(lin,seq);
+    [~,infoA] = unicycle.ode.linvisSpinUp(lin,seq);
     verifyEqual(testCase,infoA.t',[0,35,50,80]*yr)
     verifyLessThan(testCase,infoA.budgetErrP,1e-12)
     verifyLessThan(testCase,infoA.budgetErrC,1e-9)
@@ -338,13 +338,13 @@ for etaCase = {heterogeneousEta(testCase,rcv,lin0),10*heterogeneousEta(testCase,
     % output times: post-event state at an event time, the state before the
     % next supercycle at T, and evolution between events
     tOut = [0,20,35,60,T/yr]*yr;
-    [v,info] = unicycle.ode.linvisSpinUpSequence(lin,seq,tOut);
+    [v,info] = unicycle.ode.linvisSpinUp(lin,seq,tOut);
     verifyEqual(testCase,v(:,[1,3]),infoA.vPost(:,[1,2]),'AbsTol',1e-12*Vpl)
     verifyEqual(testCase,v(:,5),infoA.vPre(:,1),'AbsTol',1e-12*Vpl)
     [vE,sE] = unicycle.ode.linvisEvolve(lin,infoA.vPost(:,3),10*yr);
     verifyEqual(testCase,v(:,4),vE,'AbsTol',1e-10*Vpl)
     slipTo50 = info.slip(:,4) - sE;      % slip from 0⁻ to just after the event at 50 yr
-    [~,s50] = unicycle.ode.linvisSpinUpSequence(lin,seq,50*yr);
+    [~,s50] = unicycle.ode.linvisSpinUp(lin,seq,50*yr);
     verifyEqual(testCase,slipTo50,s50.slip,'AbsTol',1e-9*Vpl*T)
     verifyEqual(testCase,info.slip(:,5),infoA.slipCycle(:),'AbsTol',1e-12*Vpl*T)
 end
@@ -361,11 +361,11 @@ lin = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,heterogeneousEta(te
 T = 120*yr;
 seq = mixedSequence(rcv,lin,T);
 tOut = linspace(0,T,13);
-vSeq = unicycle.ode.linvisSpinUpSequence(lin,seq,tOut);
+vSeq = unicycle.ode.linvisSpinUp(lin,seq,tOut);
 uSum = zeros(size(vSeq));
 noCheck = struct('checkBudget',false);
 for k = 1:numel(seq.events)
-    vk = unicycle.ode.linvisSpinUpSequence(lin,struct('T',T,'events',seq.events(k)),tOut,noCheck);
+    vk = unicycle.ode.linvisSpinUp(lin,struct('T',T,'events',seq.events(k)),tOut,noCheck);
     uSum = uSum + vk - lin.vStar;
 end
 verifyEqual(testCase,vSeq - lin.vStar,uSum,'AbsTol',1e-10*rcv.Vpl)
@@ -373,7 +373,7 @@ verifyEqual(testCase,vSeq - lin.vStar,uSum,'AbsTol',1e-10*rcv.Vpl)
 ev = seq.events([seq.events.t] == 35*yr);
 ev1 = struct('Trec',T,'dtau',ev.dtau,'slipC',ev.slipC);
 for tS = [0,10,40,90,120]*yr
-    vShift = unicycle.ode.linvisSpinUpSequence(lin,struct('T',T,'events',ev),tS,noCheck);
+    vShift = unicycle.ode.linvisSpinUp(lin,struct('T',T,'events',ev),tS,noCheck);
     tSince = tS - ev.t + T*(tS < ev.t);   % tS = T is just before the event at 0 of the next supercycle
     vRef = unicycle.ode.linvisSpinUp(lin,ev1,tSince);
     verifyEqual(testCase,vShift,vRef,'AbsTol',1e-12*rcv.Vpl)
@@ -390,9 +390,9 @@ T = 120*yr;
 seq = mixedSequence(rcv,lin,T);
 bad = seq;
 bad.events = seq.events([seq.events.t] ~= 0);           % drop the west-half rupture
-verifyError(testCase,@() unicycle.ode.linvisSpinUpSequence(lin,bad),...
-    'unicycle:ode:linvisSpinUpSequence:budget')
-[~,info] = unicycle.ode.linvisSpinUpSequence(lin,bad,[],struct('checkBudget',false));
+verifyError(testCase,@() unicycle.ode.linvisSpinUp(lin,bad),...
+    'unicycle:ode:linvisSpinUp:budget')
+[~,info] = unicycle.ode.linvisSpinUp(lin,bad,[],struct('checkBudget',false));
 verifyEqual(testCase,info.budgetErrP,1,'RelTol',1e-12)  % the west half never slips
 mis = info.slipCycleP - lin.Vpl(lin.iP,:)*T;
 expected = lin.Vpl(lin.iC,:)*T - reshape(lin.Kcc\(lin.Kcp*mis(:)),[],2);
@@ -401,14 +401,14 @@ verifyGreaterThan(testCase,info.budgetErrC,1e-3)
 % a missing slipP cannot be checked
 noP = rmfield(seq,'events');
 noP.events = rmfield(seq.events,'slipP');
-verifyError(testCase,@() unicycle.ode.linvisSpinUpSequence(lin,noP),?MException)
-verifyWarningFree(testCase,@() unicycle.ode.linvisSpinUpSequence(lin,noP,[],struct('checkBudget',false)))
+verifyError(testCase,@() unicycle.ode.linvisSpinUp(lin,noP),?MException)
+verifyWarningFree(testCase,@() unicycle.ode.linvisSpinUp(lin,noP,[],struct('checkBudget',false)))
 % large eta: steady creep through the supercycle at the rate that, with
 % the coseismic slip on creeping patches, adds up to Vpl T
 linH = unicycle.ode.linvisAssemble(rcv,testCase.TestData.bigK,1e10*testCase.TestData.eta0);
 seqH = mixedSequence(rcv,linH,T);
-v = unicycle.ode.linvisSpinUpSequence(lin,seq,[0,40,T/yr]*yr);
-vH = unicycle.ode.linvisSpinUpSequence(linH,seqH,[0,40,T/yr]*yr);
+v = unicycle.ode.linvisSpinUp(lin,seq,[0,40,T/yr]*yr);
+vH = unicycle.ode.linvisSpinUp(linH,seqH,[0,40,T/yr]*yr);
 vSteady = reshape(lin.Vpl(lin.iC,:) - sum(cat(3,seqH.events.slipC),3)/T,[],1);
 verifyEqual(testCase,vH,repmat(vSteady,1,3),'AbsTol',1e-6*rcv.Vpl)
 verifyGreaterThan(testCase,max(abs(v(:) - vH(:))),0.1*rcv.Vpl)

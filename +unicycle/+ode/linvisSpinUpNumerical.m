@@ -6,8 +6,8 @@ function [vPre,info] = linvisSpinUpNumerical(lin,event,opts)
 %   [vPre,info] = unicycle.ode.linvisSpinUpNumerical(lin,event,opts)
 %   [vPre,info] = unicycle.ode.linvisSpinUpNumerical(lin,seq,opts)
 %
-% Numerical counterpart of unicycle.ode.linvisSpinUp and
-% linvisSpinUpSequence, used to verify the closed-form periodic solution.
+% Numerical counterpart of unicycle.ode.linvisSpinUp, used to verify the
+% closed-form periodic solution.
 % Each cycle applies, at each event time, the velocity jump
 % (unicycle.ode.linvisEvent) and the coseismic slip on creeping patches,
 % and integrates unicycle.ode.odeLinearViscous in between, over a period
@@ -21,7 +21,7 @@ function [vPre,info] = linvisSpinUpNumerical(lin,event,opts)
 %   event - structure with Trec, dtau and optionally slipC, e.g. from
 %           unicycle.ode.periodicEvent(lin,Trec,weightC), the event at t = 0
 %   seq   - or a sequence: structure with T and events (struct array with
-%           t, dtau, optionally slipC), as for linvisSpinUpSequence
+%           t, dtau, optionally slipC), as for linvisSpinUp
 %   opts  - (optional) structure with fields (defaults in brackets)
 %           v0         - initial slip rate at t = 0⁻ [Vpl on creeping patches]
 %           maxCycles  - [1000]
@@ -36,8 +36,7 @@ function [vPre,info] = linvisSpinUpNumerical(lin,event,opts)
 %          before and after each event, sorted by time), slipCycle
 %          (Nc x 2), history (slipErr and dv per cycle)
 %
-% SEE ALSO: unicycle.ode.linvisSpinUp, unicycle.ode.linvisSpinUpSequence,
-%           unicycle.ode.odeLinearViscous
+% SEE ALSO: unicycle.ode.linvisSpinUp, unicycle.ode.odeLinearViscous
 
 if nargin < 3, opts = struct(); end
 Nc = lin.Nc;
