@@ -204,9 +204,9 @@ verifyEqual(testCase,vp/norm(vp),Tp/norm(Tp),'AbsTol',1e-12)
 verifyEqual(testCase,unicycle.ode.frictionLaw(sys,yp(3)) + eta*norm(vp),norm(Tp),'RelTol',1e-12)
 end
 
-function testBoundedRuptureTaper(testCase)
-% the taper amplitude is the largest that keeps Δτ·d within bounds; the
-% binding patch sits exactly on a bound
+function testRuptureSlipForStressChange(testCase)
+% slip on the creeping rupture patches gives exactly the target traction
+% change along the pre-event traction on each of them
 rcv = testCase.TestData.rcv;
 sys = unicycle.ode.assembleODE(rcv,testCase.TestData.bigK);
 Nc = sys.Nc;
@@ -214,21 +214,13 @@ Trec = 100*testCase.TestData.yr;
 xP = rcv.xc(sys.iP,:);
 xC = rcv.xc(sys.iC,:);
 dmin = min(sqrt(sum((permute(xC,[1,3,2]) - permute(xP,[3,1,2])).^2,3)),[],2);
-shapeC = double(dmin < 7e3).*0.8;
+inE = dmin < 7e3;
 y = unicycle.ode.steadyState(sys);
 d = unicycle.ode.stateTraction(sys,y);
-% loose bounds: full taper
-[wC,A] = unicycle.ode.boundedRuptureTaper(sys,Trec,shapeC,[-1e3,1e3],d);
-verifyEqual(testCase,A,1)
-verifyEqual(testCase,wC,shapeC)
-% tight lower bound: reduced amplitude, all patches within bounds, one binding
-bounds = [-0.1,1e3];
-[wC,A,dtauPar] = unicycle.ode.boundedRuptureTaper(sys,Trec,shapeC,bounds,d);
-verifyGreaterThan(testCase,A,0)
-verifyLessThan(testCase,A,1)
-verifyEqual(testCase,wC,A*shapeC,'RelTol',1e-12)
-verifyGreaterThanOrEqual(testCase,dtauPar,bounds(1) - 1e-9)
-verifyEqual(testCase,min(dtauPar),bounds(1),'AbsTol',1e-9)
+target = -0.5;
+[wC,dtauPar] = unicycle.ode.ruptureSlipForStressChange(sys,Trec,inE,target,d);
+verifyEqual(testCase,wC(~inE),zeros(sum(~inE),1))
+verifyEqual(testCase,dtauPar(inE),target*ones(sum(inE),1),'AbsTol',1e-9)
 % consistent with eventStressChange
 dtau = unicycle.ode.eventStressChange(sys,Trec,1,wC);
 dn = d./hypot(d(:,1),d(:,2));

@@ -78,6 +78,7 @@ steady-state rate-dependent friction.
 | `unicycle.ode.assembleODE(rcv,bigK,law)` | one-time setup: partitioned kernel (`Kcc`, `Kcp`), loading, `y0` |
 | `unicycle.ode.steadyState(sys)` | interseismic steady state `v = K_cc \ (−τ̇_load)` as a state vector; use it as the starting point |
 | `unicycle.ode.eventStressChange(sys,Trec,weight,weightC)` | coseismic slip `weight·Vpl·Trec` on pinned patches (and `weightC·Vpl·Trec` on creeping patches inside the rupture); `Δτ = K_cp slip_P + K_cc slip_C` |
+| `unicycle.ode.ruptureSlipForStressChange(sys,Trec,inRuptureC,dtauTarget,direction)` | slip on creeping patches inside the rupture that gives each of them a prescribed Δτ·d (e.g. a 3 MPa stress drop) |
 | `unicycle.ode.stateTraction(sys,y)` | traction vector implied by the state, `|T| = F(v) + ηv` along θ |
 | `unicycle.ode.applyEvent(sys,y,dtau,slipC)` | coseismic state jump `T⁺ = T⁻ + Δτ`, damped inverse for v⁺, θ⁺ from T⁺; adds `slipC` to the slip state |
 | `unicycle.ode.odeRateDependent(t,y,sys)` | ODE right-hand side |
@@ -86,7 +87,7 @@ steady-state rate-dependent friction.
 
 `+unicycle/Contents.m` lists an older `unicycle/ode/*` (evolution, rateandstate, …) that is not in this copy, so there are no name clashes.
 
-**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 47 tests and all pass; the run takes about 1 min.
+**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 48 tests and all pass; the run takes about 1 min.
 
 | file | covers |
 |---|---|
@@ -94,7 +95,7 @@ steady-state rate-dependent friction.
 | `testComputeKernels` | block ordering; reload; changed G, nu or geometry → new file; tampered or foreign cache caught |
 | `testFrictionLaw` | log law; asinh = log for realistic f0/(a−b); asinh regularization at low v; derivative; inverse round trip; no overflow; damped inverse |
 | `testAssembleODE` | partitioning; scalar expansion; Vpl/Vrake components; loading `K(v−Vpl)` with `v_p = 0`; steady state; `y0`; validation and warning |
-| `testImposedEvent` | `Kcp` partition; `Δτ` matches the full kernel and is linear in the weight; nearest neighbours loaded in the slip direction; `applyEvent` ∘ `stateTraction` is the identity for Δτ = 0; traction balance and direction after rotating/amplifying/reducing steps; damping caps v⁺; spring-slider afterslip → Δτ/k; `steadyState` is a fixed point; log-law negative traction raises an error; rupture onto creeping patches (Δτ from the full kernel, stress drop, slip jump); traction reversal with asinh gives backward slip ∥ T⁺ |
+| `testImposedEvent` | `Kcp` partition; `Δτ` matches the full kernel and is linear in the weight; nearest neighbours loaded in the slip direction; `applyEvent` ∘ `stateTraction` is the identity for Δτ = 0; traction balance and direction after rotating/amplifying/reducing steps; damping caps v⁺; spring-slider afterslip → Δτ/k; `steadyState` is a fixed point; log-law negative traction raises an error; rupture onto creeping patches (Δτ from the full kernel, stress drop, slip jump); traction reversal with asinh gives backward slip ∥ T⁺; slip solved for a prescribed stress change hits the target exactly |
 | `testOdeRateDependent` | projection formulas; f0-independent acceleration; `θ̇ ∝ 1/|τ|`; spring-slider logistic solution; rake relaxation `exp(−k Vpl t/|τ|)`; radiation damping; damped traction balance conserved; small mesh converges to BEM |
 
 Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` and `oneSliderSystem`.
@@ -193,6 +194,14 @@ Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` a
     - f0 = 0.1: the drop exceeds the 4.9 MPa traction, so on 14 patches the traction reverses (|T⁺| down to 0.78 MPa, pointing backward). With asinh this is the linear-viscous regime: backward slip at ~1e-7 Vpl (negligible slip). As the patch is reloaded, the traction rotates through 180° instead of passing through zero (min |T| over the run 0.11 MPa) and returns to forward creep at ~Vpl by ~150 yr.
   - **Numerically stable in all four cases.** `ode45` at 1e-8 needs < 0.3 s, no warnings. The traction implied by the state, `(F(v) + ηv)·[cos θ, sin θ]`, matches the elastic traction `T⁺ + K_cc(slip − slip⁺) + τ̇_load t` to ~1e-7 (a−b)σ over the whole run, including the reversal and the 180° rotation.
   - **Caveat.** The (ζ, θ) state is singular only if the traction passes exactly through zero, i.e. stays exactly anti-parallel while it reloads. Here a perpendicular traction component (oblique rake, rupture ends) keeps it away from zero. A symmetric setup (e.g. a pure-thrust 2D-like rupture with reversal on the symmetry line) could hit the singularity; then switch to the traction-state formulation (Physics section). The log law cannot represent a reversed traction at all (`stateTraction` errors).
+
+- [x] Extended rupture with a prescribed 3 MPa stress drop: same 240 × 100 km rupture, but the slip on the 20 extension patches is solved for (`unicycle.ode.ruptureSlipForStressChange`, a 20 × 20 linear system) so that every one of them gets Δτ·T̂⁻ = −3 MPa (projected on its pre-event traction direction). `dtauTarget = -3` in `postseismicExample.m`; outputs tagged `_drop3`; third row of `postseismicCompare.png`, whose last column now shows |τ|(t).
+  - (A first attempt with a cos² taper scaled to keep −3 ≤ Δτ ≤ 10 MPa only made one patch reach −3 MPa; the outer row was loaded by up to +3 MPa. Replaced.)
+  - Slip on the extension: 3.5–6.6 m (vs 8.1 m on the asperity). Elsewhere Δτ·T̂⁻ stays in [0, 7] MPa. The slip is the same for both f0 (it depends only on the kernel and the steady-state traction direction).
+  - f0 = 0.1: |τ| on the extension drops from ~4.9 to ~1.9 MPa (min |T⁺| 1.68 MPa with the perpendicular component); no reversal, no backward slip. f0 = 0.6: 29.9 → 26.9 MPa.
+  - Speed: identical for both f0, v⁺ ≈ Vpl·e^{−3/0.25} ≈ 1e-5 Vpl. The patches are reloaded by the afterslip of their neighbours and by plate loading; v is back to ~Vpl after ~30–100 yr and |τ| back to its pre-event value by ~150 yr.
+  - Direction: at f0 = 0.1 the stress drop rotates the traction (and slip) on the extension by up to 28° (west-edge probe: 73° → 96°), relaxing back toward 73° over ~100 yr; at f0 = 0.6 the rotation is ≤ 2°.
+  - Same stability: < 0.3 s, traction mismatch ~1e-7 (a−b)σ.
 
 ### 6. Cycle driver and spin-up
 - [ ] Loop over cycles: integrate the interseismic period, apply the event, and repeat.

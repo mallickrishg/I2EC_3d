@@ -14,11 +14,20 @@
 %                   inside the extension slip by Vpl Trec coseismically,
 %                   which gives them a stress drop. 20e3 (one grid column
 %                   on each side) makes the rupture 20 % larger in area.
-% e.g.  f0 = 0.1; ruptureExtend = 20e3; run('studies/postseismicExample.m')
+%   dtauTarget    - traction change (MPa) along the pre-event traction
+%                   direction on every creeping patch inside the
+%                   extension []. If set, the slip on the extension is
+%                   solved for so that each of those patches gets exactly
+%                   this stress change, e.g. -3 for a 3 MPa stress drop
+%                   (unicycle.ode.ruptureSlipForStressChange). If empty,
+%                   the extension slips uniformly by Vpl Trec.
+% e.g.  f0 = 0.1; ruptureExtend = 20e3; dtauTarget = -3;
+%       run('studies/postseismicExample.m')
 
-clearvars -except f0 ruptureExtend
+clearvars -except f0 ruptureExtend dtauTarget
 if ~exist('f0','var'), f0 = 0.6; end
 if ~exist('ruptureExtend','var'), ruptureExtend = 0; end
+if ~exist('dtauTarget','var'), dtauTarget = []; end
 yr = 3.1536e7;
 projectDir = fileparts(fileparts(mfilename('fullpath')));
 cd(projectDir)
@@ -58,12 +67,21 @@ inRupture = false(rcv.N,1);
 inRupture(rectangularAsperity(rcv,ruptX,aspW,dip)) = true;
 weightC = double(inRupture(iC));
 tag = sprintf('_f0_%g_ext%gkm',f0,ruptureExtend/1e3);
+[ySS,vSS] = unicycle.ode.steadyState(sys);
+Tminus = unicycle.ode.stateTraction(sys,ySS);
+if ~isempty(dtauTarget) && ruptureExtend > 0
+    [weightC,dtauPar] = unicycle.ode.ruptureSlipForStressChange(sys,Trec,weightC > 0,dtauTarget,Tminus);
+    tag = sprintf('%s_drop%g',tag,-dtauTarget);
+    ext = weightC ~= 0;
+    fprintf(['stress-drop target %g MPa on the extension: slip there %.2f-%.2f m; ',...
+        'Δτ along T- elsewhere in [%.2f, %.2f] MPa\n'],dtauTarget,...
+        min(weightC(ext))*Vpl*Trec,max(weightC(ext))*Vpl*Trec,min(dtauPar(~ext)),max(dtauPar(~ext)))
+end
 fprintf('f0 = %g, rupture %g km x %g km (%d pinned + %d creeping patches, %.0f%% of the asperity area)\n',...
-    f0,diff(ruptX)/1e3,diff(aspW)/1e3,numel(sys.iP),sum(weightC),...
+    f0,diff(ruptX)/1e3,diff(aspW)/1e3,numel(sys.iP),sum(inRupture(iC)),...
     100*sum(rcv.area(inRupture))/sum(rcv.area(sys.iP)))
 
 %% event
-[ySS,vSS] = unicycle.ode.steadyState(sys);
 [dtau,slipP,slipC] = unicycle.ode.eventStressChange(sys,Trec,1,weightC);
 y0 = unicycle.ode.applyEvent(sys,ySS,dtau,slipC);
 dtauV = [dtau(1:Nc),dtau(Nc+1:end)];
@@ -72,7 +90,8 @@ vPlus = sys.v0.*exp(y0(2*Nc+1:3*Nc));
 fprintf('coseismic slip %.2f m, Δτ along plate rake in [%.2f, %.2f] MPa, max |Δτ| %.2f MPa\n',...
     max(hypot(slipP(:,1),slipP(:,2))),min(dtauV*plateDir'),max(dtauV*plateDir'),max(hypot(dtauV(:,1),dtauV(:,2))))
 Tplus = unicycle.ode.stateTraction(sys,y0);
-Tminus = unicycle.ode.stateTraction(sys,ySS);
+dtauAlongT = sum(dtauV.*Tminus,2)./hypot(Tminus(:,1),Tminus(:,2));
+fprintf('Δτ along the pre-event traction in [%.2f, %.2f] MPa\n',min(dtauAlongT),max(dtauAlongT))
 reversed = sum(Tplus.*Tminus,2) < 0;
 fprintf('|T-| = %.1f MPa; |T+| in [%.3g, %.3g] MPa; traction reversed on %d patches\n',...
     median(hypot(Tminus(:,1),Tminus(:,2))),min(hypot(Tplus(:,1),Tplus(:,2))),...
@@ -111,6 +130,7 @@ Tstate = (unicycle.ode.frictionLaw(sys,zeta) + sys.eta.*vMag).*cat(3,cos(theta),
 dslip = [slipS - y0(1:Nc);slipD - y0(Nc+1:2*Nc)];
 Tel = [Tplus(:,1);Tplus(:,2)] + sys.Kcc*dslip + sys.taudotLoad*t';
 tracErr = max(abs([Tstate(:,:,1);Tstate(:,:,2)] - Tel),[],1);
+Tmag = hypot(Tstate(:,:,1),Tstate(:,:,2));
 fprintf('max traction mismatch over the run: %.3g MPa = %.3g (a-b)sigma\n',max(tracErr),max(tracErr)/0.25)
 % backward slip
 vPar = vMag.*cos(theta - deg2rad(rcv.Vrake));
@@ -128,7 +148,7 @@ fprintf('total afterslip / coseismic slip: max %.2f\n',max(hypot(afterS(:,end),a
 
 save(fullfile(outDir,['postseismicExample',tag,'.mat']),'t','vMag','theta','afterS','afterD',...
     'dtau','slipP','slipC','vSS','ySS','yr','Trec','f0','ruptureExtend','tracErr','runtime',...
-    'completed','warnMsg','reversed','Tplus','Tminus','iC','inRupture')
+    'completed','warnMsg','reversed','Tplus','Tminus','iC','inRupture','dtauTarget','weightC','Tmag')
 
 %% figure
 xc = rcv.xc;
@@ -213,6 +233,10 @@ cb = colorbar; cb.Label.String = 'rake^+ - rake_{ss} (deg)';
 title('coseismic rotation of the slip-rate direction')
 xlabel('East (km)'), ylabel('North (km)'), axis tight, box on, mapAxes()
 
-sgtitle(sprintf('imposed event, T_{rec} = %g yr, rupture %g km x %g km, f_0 = %g, a-b = 0.005, plate rake %g°',...
-    Trec/yr,diff(ruptX)/1e3,diff(aspW)/1e3,f0,rcv.Vrake))
+taperText = '';
+if ~isempty(dtauTarget) && ruptureExtend > 0
+    taperText = sprintf(', \\Delta\\tau = %g MPa on the extension',dtauTarget);
+end
+sgtitle(sprintf('imposed event, T_{rec} = %g yr, rupture %g km x %g km%s, f_0 = %g, a-b = 0.005, plate rake %g°',...
+    Trec/yr,diff(ruptX)/1e3,diff(aspW)/1e3,taperText,f0,rcv.Vrake))
 print(fullfile(outDir,['postseismicExample',tag,'.png']),'-dpng','-r150')
