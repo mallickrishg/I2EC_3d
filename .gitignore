@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# MATLAB
+*.asv
+*.m~
+*.mat
+slprj/
+*.autosave
+
+# Compiled MEX
+*.mex*
+
+# Figures / outputs
+*.fig
+*.png
+*.pdf
