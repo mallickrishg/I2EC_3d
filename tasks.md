@@ -331,7 +331,7 @@ Goal: an effective linear viscous friction law on creeping patches, so the cycle
   - Slip budget: slip/(Vpl·T) = 1.000000 on every creeping patch for both η.
   - Memory: the linear cycle map contracts by 0.02–0.04 per cycle (all relaxation times ≪ Trec), so the linear model forgets its initial condition within one cycle. RSF contracts by only 0.79 per cycle at f0 = 0.1 because of its slow rake mode, which the isotropic linear model does not have.
   - Early postseismic: the linear jump is Δτ/η ≈ 7 MPa / 1.5e8 ≈ 30 Vpl, versus 1e5–1e8 Vpl for RSF. With η tuned to plate rate the linear model is far too slow in the first year and spreads afterslip over ~10 yr; the surface displacements differ most in the first ~10–20 yr near the asperity, and agree closely in the late interseismic period (where both are controlled by v* and the same budget).
-  - Next: fit η (uniform first) to the RSF synthetics over different windows (e.g. 1–10 yr, 10–150 yr) to quantify which windows a linear model can represent.
+  - Next: fit η (uniform first) to the RSF synthetics over different windows (e.g. 1–10 yr, 10–150 yr) to quantify which windows a linear model can represent. Planned as Task 12.
 - [ ] 9.5 Inverse problem design:
   - **Data:** station displacement time series over a window, relative to long-term motion.
   - **Unknowns:** the coefficients of a low-rank viscosity model (see 9.5a), possibly tSince or T. η is not free at every patch.
@@ -385,7 +385,7 @@ Idea: effective viscosity is not one constant. It is large during the late inter
 **Tasks**
 - [ ] 10.1 Forward chain: given (η_0, Δτ_char, Trec, tSince), (Δτ_obs, slip_C) and (η_1…η_K, window edges), return slip rate and slip on the fault and surface velocity/displacement at stations over all windows. Reuse `linvisAssemble`/`linvisSpinUp`/`linvisEvolve`/`linvisEvent`/`surfaceDeformation`; one `lin` per window, sharing kernels and v*.
 - [ ] 10.2 Tests: continuity of v at window edges; with all η_k equal, identical to a single `linvisEvolve`; each window matches `ode45` of `odeLinearViscous` with that window's η; slip and displacement accumulate correctly across windows.
-- [ ] 10.3 Synthetic test against RSF: generate postseismic time series with the asinh RSF model (Task 5 setup), fit η_k per window with the linear chain, and compare the fitted η_k with the RSF tangent `(a−b)σ/v̄_k`. How many windows does a log-like RSF decay need?
+- [ ] 10.3 (Planned in detail as Task 12.) Synthetic test against RSF: generate postseismic time series with the asinh RSF model (Task 5 setup), fit η_k per window with the linear chain, and compare the fitted η_k with the RSF tangent `(a−b)σ/v̄_k`. How many windows does a log-like RSF decay need?
 - [ ] 10.3b Interseismic-only inversion (W0): fit η_0 (KL field) to late-interseismic velocities on synthetics; show the η_0–Trec–tSince trade-off and how well the spatial pattern of η_0 is recovered.
 - [ ] 10.4 Inversion prototype on synthetics with KL-parameterized η_k (Task 9.5a), including resolution/identifiability of each window's η.
 
@@ -450,3 +450,57 @@ Idea: effective viscosity is not one constant. It is large during the late inter
 - ~~One ℓ for all windows?~~ One ℓ, a common basis (decided).
 - Default ℓ = L/2 from the mesh, or always user-supplied? Current plan: user value if given, else L/2.
 - Noise model for the time series (white σ only, or white + flicker/random-walk) and how to set the effective n in the information criterion.
+
+### 12. Experiment: effective viscosity of an RSF cycle, by time window (planning)
+
+Goal: generate synthetic geodetic data from the asinh RSF cycle, then fit them with the linear viscous model (Tasks 9–11) over a range of time windows. Questions: which windows a linear model can represent and to what misfit; how the fitted η_k evolve with time since the event; whether they follow the RSF tangent viscosity `η_tan = (a−b)σ/v`; and how many windows a log-like RSF decay needs. This merges the "Next" item of 9.4 with 10.3, 10.3b and 11.5 into one experiment.
+
+**Setup (reference case)**
+- Same set-up as `studies/linvisCycle.m` / `surfaceTimeseries.m`: `generic_sz15_dx20`, 200 × 100 km rectangular asperity, rake 68°, Vpl = 54 mm/yr, Trec = 150 yr; asinh, a−b = 0.005, σ = 50 MPa, v0 = Vpl, f0 = 0.1.
+- RSF truth: spin up with `runCycles` to the periodic cycle. The **modern event is the next characteristic event** at the end of the spun-up cycle, so the RSF cycle supplies both the late-interseismic state before it (t = Trec − τ) and the postseismic response after it (t = 0⁺ … Trec). The model is then exactly consistent with the W0 assumptions (characteristic cycle, tSince = Trec) and only the rheology differs.
+- Stations: a land-side grid (north > 0) plus the trench-normal profile of `surfaceTimeseries.m`, through `computeSurfaceKernels`. Use E, N, U displacement relative to long-term motion (`removeLongTerm`, `pinnedSlip`), including the coseismic step.
+- Sampling: daily for the first year, weekly up to 10 yr, then monthly to Trec. Dense output from `runCycles` (`nOut`, `tFirst` ≈ 1 day); the closed-form linear model is evaluated at the same times.
+- Noise: noise-free first; then white noise of 1 mm horizontal and 3 mm vertical (and later flicker noise, see Task 11 open questions).
+
+**Data products (saved once, `studies/output/rsfSynthetics.mat`)**
+- Station displacements and times; for diagnostics only (not used in the fit), the fault slip rate and slip on creeping patches at the same times, and the patch-wise tangent `η_tan(t) = (a−b)σ/|v|` (asinh: `∂τ/∂v` at the current state, which tends to (a−b)σ/v for v ≫ v0 e^{−f0/(a−b)}).
+- Δτ_char, slip_P, slip_C of the event, Trec, and the late-interseismic velocities (from the last few years before the event).
+
+**Windows**
+- W0: interseismic velocity field over the last 5–10 yr before the event, fitted with `linvisSpinUp(lin_0, periodicEvent, tSince)`.
+- Postseismic, log-spaced edges in time since the event, reference set: 0–0.1, 0.1–1, 1–3, 3–10, 10–30, 30–150 yr. Also try coarser sets (2–3 windows) and finer ones (two per decade), and a few contiguous windows of increasing length starting at 0 (0–1, 0–10, 0–150 yr) to show how a single η fails over long windows.
+
+**Fitting stages**
+1. **Uniform η, oracle start (isolates the rheology).** For each window, fix the slip rate at the window start to the RSF fault slip rate (not observable, a diagnostic) and line-search one uniform log η over the window's data. Output: misfit vs η curves per window, best η_k, and residual misfit. The first window uses the RSF rate just after the event; the linear jump Δτ/η is not used here.
+2. **Uniform η, chained (realistic).** The Task 10 chain: fit η_0 to W0 alone; then the coseismic jump `v(0⁺) = v_W0 + Δτ/η_1`; then η_1, η_2, … sequentially (each given the earlier ones), then jointly. Compare with stage 1: what the carried slip rate and the linear coseismic jump cost.
+3. **Spatial structure.** Add r = 1–3 KL modes per window (`klBasis`, ℓ = L/2), select r by BIC per window (Task 11.4), and compare the fitted log η_k fields with the area-averaged log η_tan over each window.
+4. **Window design.** Vary the number and placement of the edges; report the total misfit and BIC against the number of windows. Find the smallest window set that reaches the noise level.
+5. **Robustness.** Noise on/off; dense vs sparse stations (e.g. 10 stations); f0 = 0.1 vs 0.6 (from `surfaceTimeseries.m`); a modern event that differs from the characteristic one (rupture extending onto creeping patches, or part of a sequence via `linvisSpinUp(lin,seq)`).
+
+**Metrics**
+- Misfit per window (RMS and χ²/n) and the fraction of signal explained.
+- η_k against η_tan averaged over the window (area-weighted, over patches with significant afterslip), and against `η_k · v̄_k ≈ (a−b)σ`.
+- Prediction (not fitted): fault afterslip per window vs the RSF afterslip, and the late-interseismic coupling pattern from η_0 vs RSF.
+- Expected: for log-like RSF decay, v ~ 1/t, so η_tan ∝ t and fitted η_k should grow roughly linearly with the window's mid-time; the first window will need very small η (RSF jumps by 1e5–1e8 Vpl vs Δτ/η ≈ 30 Vpl at η_tan(Vpl), Task 9.4).
+- Known mismatch: RSF has a slow rake-rotation mode that the isotropic linear model lacks (Task 9.4); check how much misfit it leaves late in the cycle.
+
+**Deliverables**
+- `studies/rsfSynthetics.m` (generate and save the data), `studies/rsfToLinvis.m` (stages 1–4), figures in `studies/output/`: η_k vs time since event with η_tan overlaid; misfit vs η per window; data fit at representative stations; maps of fitted log η_k vs log η_tan.
+
+**Prerequisites**
+- Task 10.1–10.2 forward chain over windows (minimum: uniform η per window; then the KL form of Task 11.2).
+- Task 11.3 misfit and solver (a 1-D line search is enough for stages 1–2).
+
+**Tasks**
+- [ ] 12.1 RSF synthetic data set (`studies/rsfSynthetics.m`) with the diagnostics above.
+- [ ] 12.2 Window forward chain (Task 10.1) and its tests (10.2).
+- [ ] 12.3 Stage 1: uniform η per window with an oracle start; η_k vs η_tan.
+- [ ] 12.4 Stage 2: chained uniform fit, W0 first.
+- [ ] 12.5 Stage 3: KL modes per window with BIC.
+- [ ] 12.6 Stages 4–5: window design and robustness.
+
+**Open questions**
+- Modern event = next characteristic event (proposed), or a different event on top of the spun-up cycle?
+- Is the oracle start (stage 1) worth keeping in the final figures, or only as a diagnostic?
+- Should W0 data be velocities over the last few years (proposed), or displacement time series like the postseismic windows?
+- Station layout: generic grid, or a layout modelled on a real network?
