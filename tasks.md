@@ -99,7 +99,7 @@ steady-state rate-dependent friction.
 
 `+unicycle/Contents.m` lists an older `unicycle/ode/*` (evolution, rateandstate, …) that is not in this copy, so there are no name clashes.
 
-**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 60 tests and all pass; the run takes about 1 min.
+**Tests:** `tests/`, run with `matlab -batch "run('tests/runAllTests.m')"`. There are 69 tests and all pass; the run takes about 1 min.
 
 | file | covers |
 |---|---|
@@ -110,6 +110,7 @@ steady-state rate-dependent friction.
 | `testImposedEvent` | `Kcp` partition; `Δτ` matches the full kernel and is linear in the weight; nearest neighbours loaded in the slip direction; `applyEvent` ∘ `stateTraction` is the identity for Δτ = 0; traction balance and direction after rotating/amplifying/reducing steps; damping caps v⁺; spring-slider afterslip → Δτ/k; `steadyState` is a fixed point; log-law negative traction raises an error; rupture onto creeping patches (Δτ from the full kernel, stress drop, slip jump); traction reversal with asinh gives backward slip ∥ T⁺; slip solved for a prescribed stress change hits the target exactly |
 | `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close ; `spinUp` matches the `runCycles` cycle at tSince = Trec, mid-cycle and 0; primed state independent of the starting state (contraction < 1); tSince outside [0, Trec] rejected |
 | `testSurfaceDeformation` | surface kernel layout and slip signs; long-term removal; back slip is landward; displacement = ∫ velocity; coseismic step |
+| `testLinvis` | linear viscous model: partition and v* vs RSF set-up; eigendecomposition; analytic v, s vs ode45; fixed point; η-time scaling; event jump; exact periodic state vs iterated cycle map; slip budget independent of η; surface output |
 | `testOdeRateDependent` | projection formulas; f0-independent acceleration; `θ̇ ∝ 1/|τ|`; spring-slider logistic solution; rake relaxation `exp(−k Vpl t/|τ|)`; radiation damping; damped traction balance conserved; small mesh converges to BEM |
 
 Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` and `oneSliderSystem`.
@@ -261,3 +262,90 @@ Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` a
 - [ ] Apply the model to the Mexico mesh (`fault/mexico_mt_xyz`) with Euler-pole loading. This needs the outline and lat/lon files that are not in this folder.
 - [ ] Performance for larger meshes: compressed kernels such as H-matrices, or a GPU.
 - [ ] Benchmark against seqeas in an equivalent configuration.
+
+### 9. Linear viscous friction: analytic cycles and inversion (planning)
+
+Goal: an effective linear viscous friction law on creeping patches, so the cycle ODE is linear and has a closed-form solution. That gives exact spin-up and time evolution, and makes the effective viscosity structure the unknown of an inverse problem fitted to geodetic time series.
+
+**Formulation** (creeping patches; pinned patches keep v = 0 between events)
+- Friction: `τ = τ0 + D v`. Here `D` is a 2Nc × 2Nc positive (block-)diagonal matrix of effective viscosities, in units of MPa·s/m (traction per unit slip rate, not Pa·s).
+  - **Decision: isotropic only.** `D = diag(η, η)`, one scalar η per patch acting on both slip components.
+  - Use a different symbol from the radiation damping `sys.eta = G/(2Vs)`. Damping simply adds to D and is negligible: 5 MPa·s/m against η ~ 1e8 (below).
+- Elasticity, as now: `τ̇ = K_cc v + τ̇_load`, where `τ̇_load = −K(c,:)·Vpl` keeps the pinned patches at v = 0.
+- Combined: `D v̇ = K_cc v + τ̇_load`, i.e. `v̇ = A v + D⁻¹τ̇_load` with `A = D⁻¹ K_cc`.
+- τ0 drops out of the rate form entirely. There is no counterpart of f0, and no collinearity assumption is needed beyond the choice of D.
+- Steady state: `v* = −K_cc⁻¹ τ̇_load`. This is the existing BEM steady state (`steadyState`), and it is independent of D.
+- Transient: `u = v − v*` obeys `u̇ = A u`, so `u(t) = exp(A t) u0`. Slip has a closed form too: `s(t) = v* t + A⁻¹ (exp(A t) − I) u0`. Surface displacement is `G_surf·s(t)`, using the existing kernels.
+- Event with traction change Δτ: instantaneous velocity jump `u⁺ = u⁻ + D⁻¹Δτ`.
+  - `Δτ = K_cp slip_P + K_cc slip_C`, the same as `eventStressChange`.
+  - Slip on creeping rupture patches, if any, jumps by `slip_C`.
+
+**Exact periodic spin-up**
+- Let `E = exp(A T)` and `b = D⁻¹Δτ`. With `p` the pre-event state, the periodic condition `p = E (p + b)` gives `p = (I − E)⁻¹ E b`.
+  - In the eigenbasis of A this is `p_i = b_i e^{λ_i T}/(1 − e^{λ_i T})`.
+  - It exists whenever all `Re λ_i < 0`.
+- State at `tSince` after the last event: `u = exp(A tSince)(p + b)`.
+- **Slip budget closes exactly, independently of D.** The slip per cycle is `v* T − A⁻¹ b + slip_C = −K_cc⁻¹(Δτ + τ̇_load T) + slip_C`, the same Δs* as in `spinUp`, which equals Vpl·T when the locked budget closes. So long-term slip and coupling carry no information on D. Only the transients do: the timing of postseismic and interseismic rates.
+- This is a closed-form counterpart of `spinUp` / `runCycles`. It needs no time stepping and no convergence loop.
+
+**Is K_cc negative definite?**
+- In the continuum, the elastic energy of any nonzero slip on a bounded fault in a half-space is positive. So the operator is negative definite, not just semi-definite. It would be only semi-definite with a zero mode for an infinitely long fault, or for rigid translation of an unbounded one. Its smallest |eigenvalue| scales as G/L_fault: Task 4 found an effective k ≈ 0.04 MPa/m for the slowest mode of the 20 km mesh.
+- Removing pinned patches (K_cc is a principal submatrix) keeps definiteness.
+- **Caveat: the discrete K from centroid collocation is not exactly symmetric.** Reciprocity holds for patch-integrated quantities, not for centroid values. So `A = D⁻¹K_cc` may have complex eigenvalues and be non-normal. For symmetric K, A is similar to `D^{-1/2} K D^{-1/2}`, whose eigenvalues are real and negative.
+
+**Relation to rate-and-state (what the linear model can and cannot do)**
+- **Tangent viscosity of asinh RSF** around a reference speed: `dτ/dv = (a−b)σ / v_ref` along the slip direction.
+  - At v_ref = Vpl: η ≈ 0.25 MPa / 1.7e-9 m/s ≈ 1.5e8 MPa·s/m.
+  - The resulting relaxation time is η/k ≈ (a−b)σ/(k Vpl) ≈ 110 yr, matching the RSF speed time scale in Task 4.
+- **Anisotropy.** RSF resists rotation of slip with `|τ|/v`, not `(a−b)σ/v`. This is the f0 effect on rake (Task 4). A faithful linearization therefore uses a 2 × 2 tensor per patch in the frame of the reference slip direction: `η_∥ = (a−b)σ/v_ref` and `η_⊥ = |τ_ref|/v_ref = η_∥ (f0/(a−b) + ln(v_ref/v0))`. That is still linear (block-diagonal D), and it brings back the rake/f0 behaviour. An isotropic η is equivalent to `|τ| = (a−b)σ`, i.e. the low-f regime. **We use isotropic η only**, so the linear model does not carry the f0 effect on rake; keep this in mind when comparing with RSF runs at f0 = 0.6 (Task 9.4).
+- **Limits.** A linear model relaxes as a sum of exponentials. RSF after a large stress step (Δτ ≫ (a−b)σ) gives ~1/t (Omori-like) decay from v ~ 1e8 Vpl. A single constant D per patch cannot reproduce the early postseismic phase of large events. For the inverse problem, decide whether D is a fixed per-patch property, or is allowed to vary with time window or to be re-linearized.
+
+**Tasks**
+- [x] 9.1 Properties of K (both generic meshes, rectangular asperity pinned):
+
+  | mesh | Nc | ‖K−Kᵀ‖/‖K‖ | eig(K_cc) real parts | max\|Im\|/max\|Re\| | cond(V) | eig time |
+  |---|---|---|---|---|---|---|
+  | `generic_sz15_dx20` | 650 | 2.4 % | −3.6 … −0.12 MPa/m | 4e-4 | 64 | 0.4 s |
+  | `generic_sz15` | 2600 | 2.1 % | −7.2 … −0.13 MPa/m | 6e-4 | 400 | 13 s |
+
+  - All eigenvalues have negative real parts; the symmetric part is negative definite over the same range. The slowest mode, k ≈ 0.12 MPa/m, is fault-scale and nearly the same on both meshes; the fastest scales with 1/cell size.
+  - The imaginary parts are negligible and V is well conditioned, so **eigendecomposition** is used (no symmetrization). `linvisAssemble` warns if Re λ ≥ 0 or cond(V) > 1e10.
+  - With uniform η = (a−b)σ/Vpl ≈ 1.5e8 MPa·s/m, the relaxation times −1/Re λ span ~1–40 yr (0.6–37 yr on the 10 km mesh).
+- [x] 9.2 Forward model, analytic (`+unicycle/+ode/`, same conventions as the RSF code: [strike; dip] blocks on creeping patches):
+  - `lin = linvisAssemble(rcv,bigK,eta)`: partition (`iC`, `iP`, `Kcc`, `Kcp`, `taudotLoad`, `Vpl`, so `periodicEvent`/`eventStressChange`/`surfaceDeformation` accept `lin`), `vStar`, eigendecomposition of `A = D⁻¹K_cc`. η scalar, Nc × 1 or N × 1. Needs only `Vpl`, `Vrake`, `pinnedPosition` on `rcv`.
+  - `[v,s] = linvisEvolve(lin,v0,t)`: `v = v* + V(e^{λt}.*c)`, `s = v* t + V((e^{λt}−1)./λ.*c)`, `c = V⁻¹(v0 − v*)`; `e^z − 1` evaluated as `2e^{z/2} sinh(z/2)` to avoid cancellation.
+  - `v = linvisEvent(lin,v,dtau)`: `v + Δτ/η`.
+  - `[v,info] = linvisSpinUp(lin,event,tSince)`: exact periodic cycle, `p_i = b_i e^{λ_i T}/(1 − e^{λ_i T})`; returns the slip rate at tSince, `vPre`, `vPost`, `slipCycle`, `slipSince`, and `spectralRadius` = max |e^{λT}|.
+  - Surface: `surfaceDeformation(G,lin,t,struct('v',v,'s',s),opts)` (it now also accepts slip rate and slip directly).
+- [x] 9.3 Verification (`tests/testLinvis.m`, 8 tests): partition and v* match `assembleODE`/`steadyState`; eigendecomposition reproduces A; analytic v and s match `ode45` for depth-dependent η; v* is a fixed point; η → cη equals t → t/c; event jump; closed-form periodic state returns to itself after one cycle and equals 200 iterations of the cycle map; slip per cycle = Vpl·T for two different η, with and without slip on creeping rupture patches; output feeds `surfaceDeformation` and the relative displacement closes after a cycle.
+  - Viscosity limits (`testViscosityLimits`): η → ∞ gives steady creep at Vpl through the whole cycle (`v₀ − v* = (I − E)⁻¹b → −K_cc⁻¹Δτ/T`, the events are averaged out); η → 0 gives instant relaxation to v*. Both close the slip budget. The spin-up only needs `I − E` invertible (all Re λ < 0); `e^{λT} − 1` is computed by `linvisExpm1` (sinh form for |z| < 1, direct otherwise), because `1 − exp(λT)` loses all digits for |λT| ≲ 1e-8 and the sinh form gives 0·∞ for λT → −∞.
+  - Only the loading term needs A invertible (v* = −A⁻¹c). If near-zero modes ever appear, use `v₀ = (I − E)⁻¹[T φ₁(AT) c + b]`; a periodic solution then requires `T c̃ᵢ + b̃ᵢ = 0` in that mode (slip-budget closure per mode).
+  - Not yet done: the small-perturbation limit against `odeRateDependent` with the tangent viscosity.
+- [~] 9.4 Linear vs RSF, first look (`studies/linvisCycle.m` → `studies/output/linvisCycle.png`; 20 km mesh, rectangular asperity, rake 68°, Trec = 150 yr; RSF asinh f0 = 0.1; linear with uniform η0 = (a−b)σ/Vpl and with η increasing ×10 with depth around η0):
+  - Cost: RSF spin-up 31 cycles in 5.8 s; linear assemble 0.7 s (eigendecomposition), then exact spin-up + 162 output times in ~0.015 s.
+  - Slip budget: slip/(Vpl·T) = 1.000000 on every creeping patch for both η.
+  - Memory: the linear cycle map contracts by 0.02–0.04 per cycle (all relaxation times ≪ Trec), so the linear model forgets its initial condition within one cycle. RSF contracts by only 0.79 per cycle at f0 = 0.1 because of its slow rake mode, which the isotropic linear model does not have.
+  - Early postseismic: the linear jump is Δτ/η ≈ 7 MPa / 1.5e8 ≈ 30 Vpl, versus 1e5–1e8 Vpl for RSF. With η tuned to plate rate the linear model is far too slow in the first year and spreads afterslip over ~10 yr; the surface displacements differ most in the first ~10–20 yr near the asperity, and agree closely in the late interseismic period (where both are controlled by v* and the same budget).
+  - Next: fit η (uniform first) to the RSF synthetics over different windows (e.g. 1–10 yr, 10–150 yr) to quantify which windows a linear model can represent.
+- [ ] 9.5 Inverse problem design:
+  - **Data:** station displacement time series over a window, relative to long-term motion.
+  - **Unknowns:** the coefficients of a low-rank viscosity model (see 9.5a), possibly tSince or T. η is not free at every patch.
+  - **Known:** Δτ from the characteristic event, locked region, Vpl.
+  - **Structure:** given D, the prediction is linear in b (and in u0), so amplitude-type unknowns can be eliminated by linear least squares (variable projection).
+  - **Derivatives with respect to D:** eigenvalue/eigenvector perturbation, or the Fréchet derivative of `expm`; or derivative-free/MCMC for a few parameters.
+- [ ] 9.5a Low-rank viscosity parameterization.
+  - Work with `m = log η` (keeps η > 0; viscosity varies over orders of magnitude).
+  - Prior covariance on patch centroids, e.g. Matérn, `C_ij = σ_m² · Matérn_ν(r_ij/ℓ)`; ν = 1/2 is the exponential kernel `σ_m² exp(−r_ij/ℓ)`. r_ij is the distance between centroids: Euclidean in 3D for now, along-fault distance if the mesh is strongly curved.
+  - Truncated Karhunen–Loève expansion: `m = m̄ + Φ_r Λ_r^{1/2} c`, where (Φ_r, Λ_r) are the r leading eigenpairs of C, and `c ~ N(0, I)` are the unknowns. r is set by the fraction of prior variance kept, e.g. 95–99 %; for ℓ ~ 50–100 km on a 500 × 300 km fault, expect tens of modes, not hundreds.
+  - Hyperparameters: mean m̄ (e.g. log of the RSF tangent value (a−b)σ/Vpl), σ_m, ℓ, ν, r. Fix them first, then test their sensitivity or treat them hierarchically.
+  - The modes depend only on the mesh and hyperparameters: compute once and cache them, like the kernels. The covariance is on all creeping patches (Nc × Nc), so its eigendecomposition is cheap on both meshes.
+  - Alternative basis to compare: smooth eigenmodes of the elastic operator K_cc or of a mesh Laplacian.
+  - Gradients: `∂d/∂c = (∂d/∂m) · Φ_r Λ_r^{1/2}`, so only r directional derivatives of the forward model are needed. With r small, finite differences or complex-step on c are affordable; otherwise use the eigen-perturbation/Fréchet derivative of expm.
+- [ ] 9.6 Identifiability on synthetics. Generate data with the linear model and with the RSF model, then invert. Which KL modes (and hence which parts of η) are resolved by a given station geometry and window length (near-asperity vs distant, shallow vs deep), and how do trade-offs with tSince, T and Δτ look?
+- [ ] 9.7 Cost and scaling: one decomposition per D, O((2Nc)³). That is trivial for 750 patches (1300 × 1300) and a few seconds for 3000 patches (~5400 × 5400); it governs the cost of each inversion iteration.
+
+**Open questions**
+- ~~Isotropic η or the RSF-derived tensor?~~ Isotropic (decided).
+- One D for the whole cycle, or different D for the postseismic and interseismic windows?
+- ~~Parameterization of D~~: low-rank KL modes of a Matérn covariance on log η (decided). Still open: values of ℓ, ν, σ_m and r, and whether to estimate them.
+- Which data: GNSS displacement time series only, or also InSAR / long-term rates?

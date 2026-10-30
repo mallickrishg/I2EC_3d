@@ -25,7 +25,10 @@ function [vSurf,uSurf] = surfaceDeformation(G,sys,t,Y,opts)
 %   sys  - structure from unicycle.ode.assembleODE
 %   t    - (nt x 1) times (s)
 %   Y    - (nt x 4Nc) states [slip_s, slip_d, zeta, theta] at t, e.g. from
-%          ode45 or unicycle.ode.runCycles (out.t, out.y)
+%          ode45 or unicycle.ode.runCycles (out.t, out.y), or a structure
+%          with fields v and s (2Nc x nt) holding the [strike; dip] slip
+%          rate and slip on creeping patches directly, e.g. from
+%          unicycle.ode.linvisEvolve
 %   opts - (optional) structure with fields (defaults in brackets)
 %          removeLongTerm - remove G Vpl from the velocity and G Vpl t
 %                           from the displacement [false]
@@ -42,7 +45,8 @@ function [vSurf,uSurf] = surfaceDeformation(G,sys,t,Y,opts)
 %   vSurf - (nt x D x 3) [east, north, up] surface velocity (m/s)
 %   uSurf - (nt x D x 3) [east, north, up] surface displacement (m)
 %
-% SEE ALSO: unicycle.greens.computeSurfaceKernels, unicycle.ode.runCycles
+% SEE ALSO: unicycle.greens.computeSurfaceKernels, unicycle.ode.runCycles,
+%           unicycle.ode.linvisEvolve
 
 if nargin < 5, opts = struct(); end
 if ~isfield(opts,'removeLongTerm') || isempty(opts.removeLongTerm), opts.removeLongTerm = false; end
@@ -56,7 +60,6 @@ iC = sys.iC;
 iP = sys.iP;
 assert(size(G,2) == 2*N,'surfaceDeformation: G must be 3D x 2N')
 assert(mod(size(G,1),3) == 0,'surfaceDeformation: G must have 3 rows per station')
-assert(size(Y,2) == 4*Nc && size(Y,1) == numel(t),'surfaceDeformation: Y must be nt x 4Nc')
 assert(isequal(size(opts.pinnedSlip),[numel(iP),2]),'surfaceDeformation: pinnedSlip must be Np x 2')
 D = size(G,1)/3;
 nt = numel(t);
@@ -66,10 +69,18 @@ GC = G(:,[iC;N+iC]);
 GP = G(:,[iP;N+iP]);
 
 % on-fault slip rate and slip on creeping patches (2Nc x nt)
-vMag = sys.v0.*exp(Y(:,2*Nc+1:3*Nc)');
-theta = Y(:,3*Nc+1:end)';
-vC = [vMag.*cos(theta);vMag.*sin(theta)];
-sC = Y(:,1:2*Nc)';
+if isstruct(Y)
+    vC = Y.v;
+    sC = Y.s;
+    assert(isequal(size(vC),[2*Nc,nt]) && isequal(size(sC),[2*Nc,nt]),...
+        'surfaceDeformation: Y.v and Y.s must be 2Nc x nt')
+else
+    assert(size(Y,2) == 4*Nc && size(Y,1) == nt,'surfaceDeformation: Y must be nt x 4Nc')
+    vMag = sys.v0.*exp(Y(:,2*Nc+1:3*Nc)');
+    theta = Y(:,3*Nc+1:end)';
+    vC = [vMag.*cos(theta);vMag.*sin(theta)];
+    sC = Y(:,1:2*Nc)';
+end
 
 v = GC*vC;
 u = GC*sC + GP*opts.pinnedSlip(:);

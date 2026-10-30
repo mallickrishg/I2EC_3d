@@ -55,6 +55,7 @@ On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cy
 | Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
 | Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)` |
 | Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
+| Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
 | Surface stations | `G = unicycle.greens.computeSurfaceKernels(rcv, xObs)` once, then `[vSurf, uSurf] = unicycle.ode.surfaceDeformation(G, sys, t, Y, opts)` |
 
 The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`):
@@ -97,6 +98,17 @@ o    = struct('removeLongTerm',true,'pinnedSlip',out.event.slipP);
 - **Slip signs:** positive dip slip is thrust; positive strike slip is left-lateral. Kernels are `bigK = [Kss, Kds; Ksd, Kdd]`.
 - **Who sets properties:** the user writes all physical properties into the mesh object after reading it; library code only reads them.
 
+## Linear viscous friction (analytic)
+
+With `τ = τ0 + η v` on creeping patches (isotropic η per patch, MPa·s/m), the cycle ODE is linear, `v̇ = D⁻¹(K_cc v + τ̇_load)`, and is solved in closed form from the eigendecomposition of `A = D⁻¹K_cc`. That includes the exact periodic cycle for a characteristic event: no time stepping, no spin-up loop. The slip per cycle is Vpl·Trec for any η, so only transients constrain η. This is the forward model for inverting effective viscosity structure; see Task 9 in tasks.md.
+
+```matlab
+lin   = unicycle.ode.linvisAssemble(rcv,bigK,eta);      % eta: scalar, Nc x 1 or N x 1
+event = unicycle.ode.periodicEvent(lin,Trec);
+[vNow,info] = unicycle.ode.linvisSpinUp(lin,event,tSince);   % exact periodic state
+[v,s] = unicycle.ode.linvisEvolve(lin,info.vPost,t);          % 2Nc x nt, closed form
+```
+
 ## Modelling choices
 
 - **asinh friction only** for experiments. The log law is kept in the code for reference, but it cannot represent the reduced or reversed tractions that imposed events produce next to and inside creeping regions.
@@ -118,6 +130,8 @@ o    = struct('removeLongTerm',true,'pinnedSlip',out.event.slipP);
     ruptureSlipForStressChange.m slip on creeping rupture patches for a prescribed stress drop
     stateTraction.m, applyEvent.m      traction from state; coseismic state jump
     surfaceDeformation.m         surface velocity and displacement time series
+    linvisAssemble.m, linvisEvolve.m, linvisEvent.m, linvisSpinUp.m, linvisExpm1.m
+                                 linear viscous friction: closed-form evolution and exact periodic cycle
     periodicEvent.m              characteristic event that closes the locked slip budget
     spinUp.m, runCycles.m        spin-up to the periodic cycle
   (rest of unicycle: geometry, Green's functions, utilities)
@@ -141,6 +155,7 @@ Meshes:
 | `studies/postseismicCompare.m` | compares the `postseismicExample` cases |
 | `studies/cycleSpinup.m` | spin-up to the periodic cycle, slip budget and convergence figures |
 | `studies/surfaceTimeseries.m` | surface velocity and displacement over the periodic cycle along a trench-normal profile |
+| `studies/linvisCycle.m` | analytic linear viscous cycle vs the RSF cycle |
 | `studies/plotLockedAsperity.m` | plots the mesh and locked region |
 
 ## Tests
@@ -149,7 +164,7 @@ Meshes:
 /Applications/MATLAB_R2025a.app/bin/matlab -batch "run('tests/runAllTests.m')"
 ```
 
-60 tests cover:
+69 tests cover:
 - sign and axis conventions;
 - kernel caching;
 - the friction laws and the damped inverse;
@@ -158,6 +173,7 @@ Meshes:
 - convergence to the boundary-element steady state;
 - imposed events (traction balance, reversal, stress-drop solve);
 - cycle spin-up (slip-budget closure, independence of the starting state);
-- surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity).
+- surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity);
+- the analytic linear viscous model (against `ode45`, the iterated cycle map and the slip budget).
 
 The suite takes about a minute.
