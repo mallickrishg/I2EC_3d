@@ -1,0 +1,143 @@
+# I2EC_3d: imposed earthquake cycles on a 3D fault
+
+MATLAB code for earthquake-cycle models in which earthquakes are **imposed** periodically on a locked part of a 3D triangular fault mesh, and the rest of the fault **creeps** according to rate-strengthening friction. It follows the approach of [seqeas](https://github.com/tobiscode/seqeas-public), extended to 3D with two-component (strike and dip) slip. It is built on the unicycle library, included under `+unicycle/`.
+
+The model:
+- **Elasticity:** traction kernels between triangular patches in a half-space (Nikkhoo & Walter 2015), `τ̇ = K (v − Vpl)`, with `v = 0` on locked patches between events.
+- **Friction:** steady-state rate-strengthening friction on creeping patches, `|τ| = (a−b)σ asinh(|v|/(2v0) · exp(f0/(a−b)))`, with radiation damping `G/(2Vs)`. The slip-rate vector is assumed collinear with the traction vector; the friction law sets their magnitudes.
+- **Events:** each event releases the slip deficit of the locked region, `Vpl·Trec` along the plate rake, so its slip budget closes. Optionally the rupture extends onto creeping patches with a prescribed stress drop.
+- **Spin-up:** the characteristic event is repeated until the cycle is periodic. The resulting state is the primed initial condition on which recorded (instrumental-era) events and creep are imposed.
+
+Status, decisions and results of all experiments so far are in [tasks.md](tasks.md).
+
+## Requirements
+
+- MATLAB (developed and tested with R2025a). No toolboxes beyond core MATLAB.
+- Run everything from the repository root, so that the `+unicycle` package is on the path.
+
+## Quick start
+
+```matlab
+yr = 3.1536e7;
+addpath('studies')                                    % rectangularAsperity
+
+% mesh and kernels (cached in kernels/ after the first run)
+eM   = unicycle.greens.nikkhoo15(30e3,0.25);          % shear modulus (MPa), Poisson's ratio
+rcv  = unicycle.geometry.triangleReceiver('fault/generic_sz15_dx20',eM);
+bigK = unicycle.greens.computeKernels(rcv,'generic_sz15_dx20');
+
+% properties, written by the user into the mesh object (m, s, MPa)
+rcv.a = 0.015;  rcv.b = 0.010;  rcv.sigma = 50;  rcv.mu0 = 0.6;
+rcv.Vpl = 0.054/yr;  rcv.Vo = rcv.Vpl;  rcv.Vrake = 68;  rcv.Vs = 3e3;
+rcv.pinnedPosition = rectangularAsperity(rcv,[-110e3,90e3],[40e3,140e3],15);
+
+% periodic characteristic event every 150 yr
+sys   = unicycle.ode.assembleODE(rcv,bigK,'asinh');
+event = unicycle.ode.periodicEvent(sys,150*yr);
+
+% spun-up initial condition, 120 yr after the last characteristic event
+[y0,info] = unicycle.ode.spinUp(sys,event,struct('tSince',120*yr));
+
+% or: spin up and store one full periodic cycle
+out = unicycle.ode.runCycles(sys,event);
+```
+
+On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cycles at f0 = 0.1 and about 80 at f0 = 0.6.
+
+## Workflow
+
+| step | call |
+|---|---|
+| Mesh | `rcv = unicycle.geometry.triangleReceiver('fault/<name>', eM)` reads `<name>.ned` / `<name>.tri` |
+| Kernels | `bigK = unicycle.greens.computeKernels(rcv, '<name>')` loads cached kernels if they match the mesh geometry and elastic constants, otherwise computes and caches them |
+| Properties | set `a, b, sigma, mu0, Vo, Vpl, Vrake, Vs, pinnedPosition` on `rcv` (scalar or one value per patch) |
+| System | `sys = unicycle.ode.assembleODE(rcv, bigK, 'asinh')` (rebuild after changing any property) |
+| Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
+| Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)` |
+| Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
+
+The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`):
+
+```
+y = [slip_strike; slip_dip; zeta; theta]     zeta = log(|v|/v0), theta = rake (rad)
+```
+
+Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (strike, dip). In `runCycles` output, `out.t` is the time since the event and `out.y` holds the state of one periodic cycle, with slip relative to the start of the cycle. Locked patches have `v = 0` between events and slip `out.event.slipP` at each event.
+
+### Friction parameters to vary
+
+| property | meaning | typical |
+|---|---|---|
+| `a`, `b` | rate-and-state parameters, `a > b` on creeping patches | 0.015, 0.010 |
+| `sigma` | effective normal stress (MPa) | 50 |
+| `mu0` | f0, friction coefficient at v0 | 0.1–0.6 |
+| `Vo` | v0; set it to `Vpl` so that f0 is the friction at plate rate | `rcv.Vpl` |
+| `Vs` | shear-wave speed (m/s), for radiation damping | 3e3 |
+
+## Conventions
+
+- **Units:** m, s and MPa. Velocities are in m/s, even though the unicycle constructor defaults are in m/yr, so always overwrite `Vs` and `Vo`.
+- **Coordinates:** `.ned` files are `[index, north, east, depth (positive down)]`. After loading, `rcv.x` / `rcv.xc` are `[east, north, up]`.
+- **Slip signs:** positive dip slip is thrust; positive strike slip is left-lateral. Kernels are `bigK = [Kss, Kds; Ksd, Kdd]`.
+- **Who sets properties:** the user writes all physical properties into the mesh object after reading it; library code only reads them.
+
+## Modelling choices
+
+- **asinh friction only** for experiments. The log law is kept in the code for reference, but it cannot represent the reduced or reversed tractions that imposed events produce next to and inside creeping regions.
+- **f0 ≥ 0.1 with v0 = Vpl.** Below this the fault is in the near-linear-viscous regime of the asinh law, tractions are comparable to coseismic stress changes, and the system becomes stiff. We do not consider it mechanically meaningful to explore.
+- **`ode45`** with `RelTol = AbsTol = 1e-8`.
+
+## Repository layout
+
+```
++unicycle/
+  +greens/computeKernels.m       cached traction kernels with geometry check
+  +ode/                          imposed-earthquake-cycle machinery
+    assembleODE.m                partition locked/creeping patches, loading, friction terms
+    odeRateDependent.m           ODE right-hand side
+    frictionLaw.m, frictionInverse.m   asinh/log laws, radiation-damped inverse
+    steadyState.m                interseismic steady state with the asperity locked forever
+    eventStressChange.m          coseismic slip and traction change
+    ruptureSlipForStressChange.m slip on creeping rupture patches for a prescribed stress drop
+    stateTraction.m, applyEvent.m      traction from state; coseismic state jump
+    periodicEvent.m              characteristic event that closes the locked slip budget
+    spinUp.m, runCycles.m        spin-up to the periodic cycle
+  (rest of unicycle: geometry, Green's functions, utilities)
+fault/                           meshes (.ned/.tri); make_fault_mesh.m writes the generic ones
+kernels/                         kernel cache (not tracked)
+studies/                         experiment scripts; outputs in studies/output/ (not tracked)
+tests/                           matlab.unittest suite
+tasks.md                         plan, decisions and results
+```
+
+Meshes:
+- **`generic_sz15`:** planar fault, 500 km along strike × 300 km down dip, dip 15°, 10 km triangles (3000).
+- **`generic_sz15_dx20`:** the same fault with 20 km triangles (750). Use this one for fast experiments.
+
+## Studies
+
+| script | what it does |
+|---|---|
+| `studies/f0ConvergenceStudy.m` | interseismic relaxation to the steady state for several f0; rake relaxes on a time scale ∝ f0 |
+| `studies/postseismicExample.m` | one imposed event and 150 yr of postseismic response (`f0`, `ruptureExtend`, `dtauTarget`) |
+| `studies/postseismicCompare.m` | compares the `postseismicExample` cases |
+| `studies/cycleSpinup.m` | spin-up to the periodic cycle, slip budget and convergence figures |
+| `studies/plotLockedAsperity.m` | plots the mesh and locked region |
+
+## Tests
+
+```bash
+/Applications/MATLAB_R2025a.app/bin/matlab -batch "run('tests/runAllTests.m')"
+```
+
+55 tests cover:
+- sign and axis conventions;
+- kernel caching;
+- the friction laws and the damped inverse;
+- loading with locked patches;
+- spring-slider solutions of the ODE;
+- convergence to the boundary-element steady state;
+- imposed events (traction balance, reversal, stress-drop solve);
+- cycle spin-up (slip-budget closure, independence of the starting state).
+
+The suite takes about a minute.
