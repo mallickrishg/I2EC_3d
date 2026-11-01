@@ -53,7 +53,8 @@ On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cy
 | Properties | set `a, b, sigma, mu0, Vo, Vpl, Vrake, Vs, pinnedPosition` on `rcv` (scalar or one value per patch) |
 | System | `sys = unicycle.ode.assembleODE(rcv, bigK, 'asinh')` (rebuild after changing any property) |
 | Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
-| Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)` |
+| Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)`; both also take a sequence `seq` (`T`, `events` from `sequenceEvent`) and repeat it as a supercycle |
+| Non-repeating sequence | `[y, info] = unicycle.ode.spinUp(sys, seq, struct('repeat', false, 'y0', y0))` runs the sequence once (e.g. a stochastic catalogue); `info.zetaPre`, `info.zetaPost` hold the state around every event |
 | Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
 | Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, seq, tOut)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
 | Surface stations | `G = unicycle.greens.computeSurfaceKernels(rcv, xObs)` once, then `[vSurf, uSurf] = unicycle.ode.surfaceDeformation(G, sys, t, Y, opts)` |
@@ -64,7 +65,7 @@ The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `
 y = [slip_strike; slip_dip; zeta; theta]     zeta = log(|v|/v0), theta = rake (rad)
 ```
 
-Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (strike, dip). In `runCycles` output, `out.t` is the time since the event and `out.y` holds the state of one periodic cycle, with slip relative to the start of the cycle. Locked patches have `v = 0` between events and slip `out.event.slipP` at each event.
+Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (strike, dip). In `runCycles` output, `out.t` is the time since the start of the cycle (for one event, the time since the event) and `out.y` holds the state of one periodic cycle, with slip relative to the start of the cycle; with a sequence, each event appears twice at its time (before and after the jump). Locked patches have `v = 0` between events and slip `out.event.slipP` at each event.
 
 ### Surface time series
 
@@ -137,11 +138,11 @@ events(2) = unicycle.ode.sequenceEvent(lin,t2,slip2);
     surfaceDeformation.m         surface velocity and displacement time series
     linvisAssemble.m, linvisEvolve.m, linvisEvent.m, linvisSpinUp.m, linvisExpm1.m
                                  linear viscous friction: closed-form evolution and exact periodic cycle
-    sequenceEvent.m              one event of a sequence (linvisSpinUp also takes repeating sequences)
+    sequenceEvent.m              one event of a sequence (spinUp, runCycles and linvisSpinUp take sequences)
     odeLinearViscous.m, linvisSpinUpNumerical.m
                                  linear viscous ODE and time-stepped spin-up, to verify the closed form
     periodicEvent.m              characteristic event that closes the locked slip budget
-    spinUp.m, runCycles.m        spin-up to the periodic cycle
+    spinUp.m, runCycles.m        spin-up to the periodic (super)cycle, or one pass through a sequence
   +inverse/                      inversion machinery (plain functions)
     klBasis.m                    Karhunen-Loève basis of a Matérn covariance on patches (low-rank log-viscosity fields)
   (rest of unicycle: geometry, Green's functions, utilities)
@@ -167,6 +168,7 @@ Meshes:
 | `studies/surfaceTimeseries.m` | surface velocity and displacement over the periodic cycle along a trench-normal profile |
 | `studies/linvisCycle.m` | analytic linear viscous cycle vs the RSF cycle |
 | `studies/klModes.m` | leading KL modes on the creeping patches for several correlation lengths |
+| `studies/stochasticSequence.m` | stochastic sequence of three jittered square events per 150 yr cycle on a fault without a locked zone; `stochasticSequenceCompare.m` makes the figures (coupling spin-up, variability, memory) |
 | `studies/plotLockedAsperity.m` | plots the mesh and locked region |
 
 ## Tests

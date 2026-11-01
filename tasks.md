@@ -87,8 +87,8 @@ steady-state rate-dependent friction.
 | `unicycle.ode.eventStressChange(sys,Trec,weight,weightC)` | coseismic slip `weight·Vpl·Trec` on pinned patches (and `weightC·Vpl·Trec` on creeping patches inside the rupture); `Δτ = K_cp slip_P + K_cc slip_C` |
 | `unicycle.ode.ruptureSlipForStressChange(sys,Trec,inRuptureC,dtauTarget,direction)` | slip on creeping patches inside the rupture that gives each of them a prescribed Δτ·d (e.g. a 3 MPa stress drop) |
 | `unicycle.ode.periodicEvent(sys,Trec,weightC)` | event that releases exactly Vpl·Trec on the locked patches (closes their slip budget), plus optional slip on creeping rupture patches |
-| `unicycle.ode.spinUp(sys,event,opts)` | spin-up only: repeats the characteristic event until the cycle is periodic and returns the primed state a time `tSince` after the last event (default: just before the next one), plus convergence info |
-| `unicycle.ode.runCycles(sys,event,opts)` | `spinUp` + one stored full cycle with output times |
+| `unicycle.ode.spinUp(sys,event,opts)` / `spinUp(sys,seq,opts)` | spin-up only: repeats the characteristic event, or a sequence (`T`, `events`, as for `linvisSpinUp`), until the (super)cycle is periodic and returns the primed state a time `tSince` after its start (default: just before the next one), plus convergence info and the state before/after each event. `opts.repeat = false` runs a non-repeating sequence once (e.g. a stochastic catalogue, Task 13), with optional dense output per interval |
+| `unicycle.ode.runCycles(sys,event,opts)` / `runCycles(sys,seq,opts)` | `spinUp` + one stored full (super)cycle with dense output after every event |
 | `unicycle.greens.computeSurfaceKernels(rcv,xObs)` | surface displacement kernels at stations, (3D × 2N) |
 | `unicycle.ode.surfaceDeformation(G,sys,t,Y,opts)` | surface velocity and displacement time series, optionally relative to the long-term motion |
 | `unicycle.ode.stateTraction(sys,y)` | traction vector implied by the state, `|T| = F(v) + ηv` along θ |
@@ -108,7 +108,7 @@ steady-state rate-dependent friction.
 | `testFrictionLaw` | log law; asinh = log for realistic f0/(a−b); asinh regularization at low v; derivative; inverse round trip; no overflow; damped inverse |
 | `testAssembleODE` | partitioning; scalar expansion; Vpl/Vrake components; loading `K(v−Vpl)` with `v_p = 0`; steady state; `y0`; validation and warning |
 | `testImposedEvent` | `Kcp` partition; `Δτ` matches the full kernel and is linear in the weight; nearest neighbours loaded in the slip direction; `applyEvent` ∘ `stateTraction` is the identity for Δτ = 0; traction balance and direction after rotating/amplifying/reducing steps; damping caps v⁺; spring-slider afterslip → Δτ/k; `steadyState` is a fixed point; log-law negative traction raises an error; rupture onto creeping patches (Δτ from the full kernel, stress drop, slip jump); traction reversal with asinh gives backward slip ∥ T⁺; slip solved for a prescribed stress change hits the target exactly |
-| `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close ; `spinUp` matches the `runCycles` cycle at tSince = Trec, mid-cycle and 0; primed state independent of the starting state (contraction < 1); tSince outside [0, Trec] rejected |
+| `testRunCycles` | locked-budget closure gives Δs* = Vpl·Trec on creeping patches (with and without creeping rupture slip); spring-slider cycles converge to Vpl·T + Δτ/k; small-mesh spin-up at f0 = 0.1 closes the slip budget and repeats; warning when the locked budget does not close ; `spinUp` matches the `runCycles` cycle at tSince = Trec, mid-cycle and 0; primed state independent of the starting state (contraction < 1); tSince outside [0, Trec] rejected; sequences: one event = sequence of one event at t = 0 (dtau from slip when omitted); one pass through a repeated event = the spin-up loop; periodic supercycle of three events on/off the locked zone closes the budget (Vpl·T on creeping patches), stored supercycle ordered with each event twice, warning when an event is dropped; no locked zone, one pass: jumps = `applyEvent`, slip accounting, dense output joins the event states, stopping at tSince truncates consistently |
 | `testSurfaceDeformation` | surface kernel layout and slip signs; long-term removal; back slip is landward; displacement = ∫ velocity; coseismic step |
 | `testLinvis` | linear viscous model: partition and v* vs RSF set-up; eigendecomposition; analytic v, s vs ode45 of `odeLinearViscous`; closed-form periodic cycle vs numerically spun-up cycle; fixed point; η-time scaling; event jump; exact periodic state vs iterated cycle map; slip budget independent of η; surface output; event sequences: closed form vs numerical spin-up, superposition of shifted single-event cycles, locked-budget check |
 | `testKLBasis` | KL basis: orthonormality (area weighted), covariance reconstruction, zero-mean modes, default ℓ, long-ℓ limits, Matérn forms, mesh independence, patch subsets |
@@ -255,7 +255,7 @@ Helpers: `makeTestMesh` (60 × 30 km plane, 36 triangles), `setTestProperties` a
 - [ ] Plots: map views of v/Vpl and rake at selected times, time series at selected patches, and the cumulative slip budget (total slip per cycle ≈ Vpl·T_rec everywhere).
 
 ### 7b. Instrumental era
-- [ ] Driver that starts from `spinUp(..., tSince = time since the last characteristic event)` and imposes the recorded sequence: coseismic slip of recorded events via `applyEvent` (traction change from their slip distributions, which may include creeping patches), creep in between with `odeRateDependent`, loading continuing with the locked patches pinned.
+- [ ] Driver that starts from `spinUp(..., tSince = time since the last characteristic event)` and imposes the recorded sequence (the event loop now exists: `spinUp(sys,seq,struct('repeat',false,'y0',y))`, see Task 13): coseismic slip of recorded events via `applyEvent` (traction change from their slip distributions, which may include creeping patches), creep in between with `odeRateDependent`, loading continuing with the locked patches pinned.
 
 ### 8. Later / optional
 - [ ] Multiple asperities with different recurrence times and non-uniform coseismic slip.
@@ -504,3 +504,48 @@ Goal: generate synthetic geodetic data from the asinh RSF cycle, then fit them w
 - Is the oracle start (stage 1) worth keeping in the final figures, or only as a diagnostic?
 - Should W0 data be velocities over the last few years (proposed), or displacement time series like the postseismic windows?
 - Station layout: generic grid, or a layout modelled on a real network?
+
+### 13. Experiment: stochastic event sequence without a locked zone
+
+Question: on a fully velocity-strengthening fault (asinh RSF, no pinned patches), impose events whose slip varies randomly from cycle to cycle. How does the system spin up, and how variable is the late-interseismic coupling? Follows the no-locked-zone runs (periodic 8.1 m events on the 200 × 100 km rectangle, where locking emerges from the stress drop alone).
+
+**Code**
+- `unicycle.ode.spinUp` takes a single event or a sequence (`T`, `events`), like `linvisSpinUp` (decided: one entry point, no separate sequence driver). With `opts.repeat = false` it runs the sequence once from `opts.y0` without a convergence check, returning the state before/after every event (`zetaPre`, `thetaPre`, `zetaPost`, `thetaPost`, `slipPre`), the slip of the pass (`slipSince`) and optional dense output per interval (`opts.dense`). `runCycles` accepts sequences too and stores the periodic supercycle.
+- `studies/stochasticSequence.m` (one case: `seed`, `nCycles`, `f0`) and `studies/stochasticSequenceCompare.m` (figures).
+
+**Set-up**
+- `generic_sz15_dx20`, asinh, a−b = 0.005, σ = 50 MPa, **f0 = 0.3**, v0 = Vpl, Vpl = 54 mm/yr at rake 68°, `pinnedPosition = []`.
+- Every 150 yr cycle: three events, one per segment (west, centre, east) at **0, 20 and 30 yr** into the cycle.
+- Each event: a square of **uniform slip** along the plate rake. Nominal centres at along-strike −150, 0, +150 km and down-dip distance 90 km, **jittered** per event (σ = 25 km along strike, 15 km down dip). Edge length N(100, 25) km truncated to [40, 160] km. **Slip N(8.1, 1.5) m** (mean = Vpl·150 yr, truncated to > 0), so the events alone close the slip budget on average at the nominal centres (decided; a first run used U(4, 8) m, see below). Patches by centroid in the square (`rectangularAsperity`); edges snap to the 20 km grid.
+- Patches near the jittered edges and in the gaps are not ruptured every cycle, so creep still supplies part of their budget.
+- Reference: the deterministic sequence of mean events (nominal centres, 100 km, 8.1 m), `seed = 0`.
+- 300 cycles (45 kyr) per run, seeds 1–3, start from v = Vpl at the plate rake. About 0.8 s per cycle alone, ~2 s with four runs in parallel.
+
+**Diagnostics** (coupling C = 1 − |v|/Vpl at the end of each cycle, just before the next west event)
+- Maps: reference C; stochastic mean and std of C after spin-up; mean − reference; seismic fraction of the slip budget.
+- Spin-up: segment-averaged C vs cycle (seeds vs reference).
+- Variability: stationary distribution of segment-averaged C.
+- Memory: correlation of C with the coseismic slip a patch received k cycles earlier (k = −1, the next cycle, as a null check) and with the slip deficit Vpl t − s.
+
+**Tasks**
+- [x] 13.1 `spinUp`/`runCycles` accept sequences; one-pass mode; tests in `testRunCycles`.
+- [x] 13.2 `studies/stochasticSequence.m`, `studies/stochasticSequenceCompare.m`.
+- [x] 13.3 Run reference + 3 seeds, figures (`studies/output/stochasticSequenceMaps_f0_0.3.png`, `stochasticSequenceStats_f0_0.3.png`).
+  - Moving the event loop into `spinUp` reproduces the earlier `runSequence` runs bit for bit (coupling and slip identical for all four cases).
+
+**Results, slip N(8.1, 1.5) m (f0 = 0.3, 300 cycles, statistics over cycles 51–300 and 3 seeds)**
+- **The mean-event reference locks its squares completely.** C ≈ 1.00 on all three segments (v down to 1e-10–1e-14 Vpl at the centres), with seismic fraction 1. It becomes periodic within ~20 cycles; |ΔC| = 3e-5 between its last two cycles.
+- **The stochastic sequence is less locked on average**, mostly at the edges. Mean segment-averaged C: west 0.79, centre 0.87, east 0.84 (reference ≈ 1.0). Mean C − C_ref reaches −0.4 along the square edges and is ≈ −0.05 in the interiors. Jitter blurs the edges: patches there are inside the rupture in some cycles and creep in others. Segment-averaged seismic fraction 0.68 (reference 1.0); creep supplies the rest at the edges and in the gaps.
+- **Spin-up of the coupling is fast:** segment-averaged C reaches its stationary distribution within ~5–10 cycles from v = Vpl.
+- **The slip budget does not run away.** At the segment centres the cumulative slip settles 7–25 m ahead of Vpl·t, i.e. those patches sit at a lower stress than the uniform-creep start. This offset wanders by ±5–10 m between 1–2 kyr windows but shows no trend over 45 kyr in any seed. So the seismic fraction = 1 knife edge (an overshooting patch can only lock harder, never pay the surplus back) is avoided: the jittered squares miss the centre patches in some cycles, which gives a small creep share and with it a restoring drift.
+- **Variability of late-interseismic coupling.** Segment-averaged 5–95 % ranges: west [0.56, 0.96], centre [0.71, 0.97], east [0.65, 0.97], skewed with a tail to low C. The std map is ≈ 0.05 in the square interiors (locked in almost every cycle) and 0.2–0.25 along the jittered edges, especially the outer along-strike ends of the west and east segments.
+- **Memory.** C correlates with the current cycle's coseismic slip (0.75), weakly with the previous cycle's (0.15), and with nothing after ~4 cycles. It does not correlate with the next event (0, as it must by construction). Its correlation with the slip deficit is weaker than with U(4, 8) slip (median −0.56), because C saturates at 1 on over-slipped patches.
+- Implication: when events close the budget on average, the interiors of the rupture squares look fully locked in almost every cycle, so the cycle-to-cycle variability of a coupling map sits at the rupture edges. A single snapshot can underestimate the locked area by a jitter length (~25 km) on any side.
+
+**First run, slip U(4, 8) m (mean 6 m, outputs in `studies/output/slipUniform4to8/`), f0 = 0.3, cycles 51–300, 3 seeds**
+- **Spin-up is fast and unremarkable.** Segment-averaged coupling reaches its stationary range within a few cycles from v = Vpl. The mean-event reference becomes periodic just as quickly (|ΔC| = 4e-9 between its last two cycles). After that, randomness, not spin-up, dominates.
+- **The slip budget closes without a locked zone.** The slip deficit Vpl t − s at the segment centres, in the gaps, up-dip and down-dip fluctuates by a few metres but does not drift over 45 kyr. Creep absorbs the shortfall: the seismic fraction is ≈ 0.75 at the segment centres and ≈ 0.5 averaged over the nominal 100 km boxes (0.74 for the reference), because the jittered squares spread the coseismic slip.
+- **The mean coupling matches the deterministic one.** The stochastic mean of C is within ±0.06 of the mean-event sequence everywhere and within 0.03 on segment averages: west 0.39 vs 0.36, centre 0.58 vs 0.56, east 0.54 vs 0.54. The west segment is less coupled because its event comes first in the cycle, so it has relaxed for 150 yr at the snapshot against 130/120 yr for centre and east.
+- **Late-interseismic coupling varies a lot from cycle to cycle.** Segment-averaged C has a std of 0.12–0.15 and a 5–95 % range of about [0.2, 0.6] (west) and [0.3–0.4, 0.8] (centre, east), i.e. ±50 % around the mean. The std map peaks (≈ 0.17) at the jittered segment edges and in the gaps between segments, where a patch is inside the rupture in some cycles and not in others.
+- **Coupling records the past, not the future.** The correlation of C with the coseismic slip a patch received is 0.55 for the current cycle's event, 0.15 one cycle earlier and < 0.05 after three cycles. It is 0 for the next event (a null check, since events are independent). C is strongly tied to the accumulated slip budget: over-slipped patches (s > Vpl t) are under-stressed and stay more locked. The median correlation of C with Vpl t − s is −0.80 over 237 ruptured patches.
+- Implication for geodesy: under random event slip, one late-interseismic coupling map reflects the slip-budget state left by the last one to two events. A single snapshot of a single segment can differ from the long-term mean pattern by ±0.2–0.3 in C.
