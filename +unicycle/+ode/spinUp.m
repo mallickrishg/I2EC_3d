@@ -12,8 +12,8 @@ function [y,info] = spinUp(sys,event,opts)
 %
 % Repeats the sequence every T until the (super)cycle is periodic, and
 % returns the state a time tSince after the start of a periodic
-% (super)cycle, i.e. after the start of the last events. The cycle map is contractive: creep diffuses the memory of
-% the initial condition, so the periodic state does not depend on where
+% (super)cycle (t = 0, the time of a single event). The cycle map is contractive:
+% creep diffuses the memory of the initial condition, so the periodic state does not depend on where
 % the spin-up starts, and the error shrinks geometrically from cycle to
 % cycle (info.contraction). The returned state is the initial condition
 % for the instrumental era, on which recorded events

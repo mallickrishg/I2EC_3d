@@ -1,12 +1,12 @@
 # I2EC_3d: imposed earthquake cycles on a 3D fault
 
-MATLAB code for earthquake-cycle models in which earthquakes are **imposed** periodically on a locked part of a 3D triangular fault mesh, and the rest of the fault **creeps** according to rate-strengthening friction. It follows the approach of [seqeas](https://github.com/tobiscode/seqeas-public), extended to 3D with two-component (strike and dip) slip. It is built on the [unicycle](https://bitbucket.org/sbarbot/unicycle/src/master/) library, included under `+unicycle/`.
+MATLAB code for earthquake-cycle models in which earthquakes are **imposed** on a 3D triangular fault mesh, either periodically on a locked part of the fault or as a sequence of events with any slip distribution, and the rest of the fault **creeps** according to rate-strengthening friction. It follows the approach of [seqeas](https://github.com/tobiscode/seqeas-public), extended to 3D with two-component (strike and dip) slip. It is built on the [unicycle](https://bitbucket.org/sbarbot/unicycle/src/master/) library, included under `+unicycle/`.
 
 The model:
 - **Elasticity:** traction kernels between triangular patches in a half-space (Nikkhoo & Walter 2015), `τ̇ = K (v − Vpl)`, with `v = 0` on locked patches between events.
 - **Friction:** steady-state rate-strengthening friction on creeping patches, `|τ| = (a−b)σ asinh(|v|/(2v0) · exp(f0/(a−b)))`, with radiation damping `G/(2Vs)`. The slip-rate vector is assumed collinear with the traction vector; the friction law sets their magnitudes.
-- **Events:** each event releases the slip deficit of the locked region, `Vpl·Trec` along the plate rake, so its slip budget closes. Optionally the rupture extends onto creeping patches with a prescribed stress drop.
-- **Spin-up:** the characteristic event is repeated until the cycle is periodic. The resulting state is the primed initial condition on which recorded (instrumental-era) events and creep are imposed.
+- **Events:** a characteristic event releases the slip deficit of the locked region, `Vpl·Trec` along the plate rake, so its slip budget closes. Optionally the rupture extends onto creeping patches with a prescribed stress drop. A **sequence** is a set of events at times `0 ≤ t_k < T`, each with its own slip on locked and/or creeping patches; the fault need not have a locked zone at all.
+- **Spin-up:** the characteristic event, or a sequence as a supercycle of period T, is repeated until the cycle is periodic. The resulting state is the primed initial condition on which recorded (instrumental-era) events and creep are imposed. A sequence that does not repeat (e.g. a stochastic catalogue) can instead be run once.
 
 Status, decisions and results of all experiments so far are in [tasks.md](tasks.md).
 
@@ -40,6 +40,13 @@ event = unicycle.ode.periodicEvent(sys,150*yr);
 
 % or: spin up and store one full periodic cycle
 out = unicycle.ode.runCycles(sys,event);
+
+% a sequence of events (slip: N x 2 [strike, dip] on all patches, in m)
+events(1) = unicycle.ode.sequenceEvent(sys,0,slip1);
+events(2) = unicycle.ode.sequenceEvent(sys,20*yr,slip2);
+seq = struct('T',150*yr,'events',events);
+out = unicycle.ode.runCycles(sys,seq);                % periodic supercycle
+[y,info] = unicycle.ode.spinUp(sys,seq,struct('repeat',false));   % one pass from v = Vpl
 ```
 
 On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cycles at f0 = 0.1 and about 80 at f0 = 0.6.
@@ -52,20 +59,23 @@ On the 750-triangle mesh, one cycle takes about 0.2 s. Spin-up takes about 30 cy
 | Kernels | `bigK = unicycle.greens.computeKernels(rcv, '<name>')` loads cached kernels if they match the mesh geometry and elastic constants, otherwise computes and caches them |
 | Properties | set `a, b, sigma, mu0, Vo, Vpl, Vrake, Vs, pinnedPosition` on `rcv` (scalar or one value per patch) |
 | System | `sys = unicycle.ode.assembleODE(rcv, bigK, 'asinh')` (rebuild after changing any property) |
-| Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` |
-| Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)`; both also take a sequence `seq` (`T`, `events` from `sequenceEvent`) and repeat it as a supercycle |
-| Non-repeating sequence | `[y, info] = unicycle.ode.spinUp(sys, seq, struct('repeat', false, 'y0', y0))` runs the sequence once (e.g. a stochastic catalogue); `info.zetaPre`, `info.zetaPost` hold the state around every event |
+| Event | `event = unicycle.ode.periodicEvent(sys, Trec, weightC)` (characteristic event), or `events(k) = unicycle.ode.sequenceEvent(sys, t_k, slip_k)` and `seq = struct('T', T, 'events', events)` (sequence) |
+| Spin-up | `[y0, info] = unicycle.ode.spinUp(sys, event, opts)` or `out = unicycle.ode.runCycles(sys, event, opts)`; pass `seq` instead of `event` to repeat a sequence as a supercycle. One entry point: a single event is treated as a sequence of one event at t = 0 with T = Trec |
+| Non-repeating sequence | `[y, info] = unicycle.ode.spinUp(sys, seq, struct('repeat', false, 'y0', y0))` runs the sequence once (e.g. a stochastic catalogue, T = its total length); `info.zetaPre`, `info.zetaPost`, `info.slipPre` hold the state around every event, and `opts.dense` lists the intervals with dense output in `info.dense` |
 | Single events | `unicycle.ode.applyEvent(sys, y, dtau, slipC)`, then `ode45(@(t,y) unicycle.ode.odeRateDependent(t,y,sys), ...)` |
-| Linear viscous, analytic | `lin = unicycle.ode.linvisAssemble(rcv, bigK, eta)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, unicycle.ode.periodicEvent(lin, Trec), tSince)`, `[v, info] = unicycle.ode.linvisSpinUp(lin, seq, tOut)`, `[v, s] = unicycle.ode.linvisEvolve(lin, v0, t)` |
 | Surface stations | `G = unicycle.greens.computeSurfaceKernels(rcv, xObs)` once, then `[vSurf, uSurf] = unicycle.ode.surfaceDeformation(G, sys, t, Y, opts)` |
 
-The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`):
+The ODE state covers the creeping patches only (`sys.Nc` of them, mesh indices `sys.iC`; locked patches are `sys.iP`, which may be empty):
 
 ```
 y = [slip_strike; slip_dip; zeta; theta]     zeta = log(|v|/v0), theta = rake (rad)
 ```
 
-Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (strike, dip). In `runCycles` output, `out.t` is the time since the start of the cycle (for one event, the time since the event) and `out.y` holds the state of one periodic cycle, with slip relative to the start of the cycle; with a sequence, each event appears twice at its time (before and after the jump). Locked patches have `v = 0` between events and slip `out.event.slipP` at each event.
+Slip rate is `v = sys.v0 .* exp(zeta)` along `[cos(theta), sin(theta)]` in (strike, dip). In `runCycles` output, `out.t` is the time since the start of the cycle (for one event, the time since the event) and `out.y` holds the state of one periodic cycle, with slip relative to the start of the cycle; with a sequence, each event appears twice at its time (before and after the jump). Locked patches have `v = 0` between events and slip `out.event.slipP` at each event (for a sequence, `out.seq.events(k).slipP`).
+
+### Slip budget
+
+With the locked patches slipping `Vpl·T` over the events of one (super)cycle, the periodic cycle slips exactly `Vpl·T` on every creeping patch, wherever the events rupture; `spinUp` warns (`unicycle:ode:spinUp:lockedBudget`) when the locked budget does not close. Without a locked zone this holds automatically: the events only set how much of `Vpl·T` is seismic, and creep supplies the rest. For a non-repeating sequence the cumulative deficit `Vpl·t − s` is bounded but not zero: it is tied to the traction, so a patch that is locked late in the cycle sits ahead of the plate.
 
 ### Surface time series
 
@@ -99,22 +109,6 @@ o    = struct('removeLongTerm',true,'pinnedSlip',out.event.slipP);
 - **Slip signs:** positive dip slip is thrust; positive strike slip is left-lateral. Kernels are `bigK = [Kss, Kds; Ksd, Kdd]`.
 - **Who sets properties:** the user writes all physical properties into the mesh object after reading it; library code only reads them.
 
-## Linear viscous friction (analytic)
-
-With `τ = τ0 + η v` on creeping patches (isotropic η per patch, MPa·s/m), the cycle ODE is linear, `v̇ = D⁻¹(K_cc v + τ̇_load)`, and is solved in closed form from the eigendecomposition of `A = D⁻¹K_cc`. That includes the exact periodic cycle for a characteristic event, or for any sequence of events that repeats every supercycle T: no time stepping, no spin-up loop. A sequence must release the slip deficit of the locked patches (Σ slip_P = Vpl·T, checked); events may rupture locked and creeping patches. The slip per cycle is Vpl·Trec for any η, so only transients constrain η. This is the forward model for inverting effective viscosity structure; see Task 9 in tasks.md.
-
-```matlab
-lin   = unicycle.ode.linvisAssemble(rcv,bigK,eta);      % eta: scalar, Nc x 1 or N x 1
-event = unicycle.ode.periodicEvent(lin,Trec);
-[vNow,info] = unicycle.ode.linvisSpinUp(lin,event,tSince);   % exact periodic state
-[v,s] = unicycle.ode.linvisEvolve(lin,info.vPost,t);          % 2Nc x nt, closed form
-
-% sequence of events (slip on any patches, N x 2), repeating every T
-events(1) = unicycle.ode.sequenceEvent(lin,0,slip1);
-events(2) = unicycle.ode.sequenceEvent(lin,t2,slip2);
-[v,info] = unicycle.ode.linvisSpinUp(lin,struct('T',T,'events',events),tOut);   % same function
-```
-
 ## Modelling choices
 
 - **asinh friction only** for experiments. The log law is kept in the code for reference, but it cannot represent the reduced or reversed tractions that imposed events produce next to and inside creeping regions.
@@ -136,15 +130,9 @@ events(2) = unicycle.ode.sequenceEvent(lin,t2,slip2);
     ruptureSlipForStressChange.m slip on creeping rupture patches for a prescribed stress drop
     stateTraction.m, applyEvent.m      traction from state; coseismic state jump
     surfaceDeformation.m         surface velocity and displacement time series
-    linvisAssemble.m, linvisEvolve.m, linvisEvent.m, linvisSpinUp.m, linvisExpm1.m
-                                 linear viscous friction: closed-form evolution and exact periodic cycle
-    sequenceEvent.m              one event of a sequence (spinUp, runCycles and linvisSpinUp take sequences)
-    odeLinearViscous.m, linvisSpinUpNumerical.m
-                                 linear viscous ODE and time-stepped spin-up, to verify the closed form
     periodicEvent.m              characteristic event that closes the locked slip budget
+    sequenceEvent.m              one event of a sequence, from its slip on any patches
     spinUp.m, runCycles.m        spin-up to the periodic (super)cycle, or one pass through a sequence
-  +inverse/                      inversion machinery (plain functions)
-    klBasis.m                    Karhunen-Loève basis of a Matérn covariance on patches (low-rank log-viscosity fields)
   (rest of unicycle: geometry, Green's functions, utilities)
 fault/                           meshes (.ned/.tri); make_fault_mesh.m writes the generic ones
 kernels/                         kernel cache (not tracked)
@@ -166,8 +154,6 @@ Meshes:
 | `studies/postseismicCompare.m` | compares the `postseismicExample` cases |
 | `studies/cycleSpinup.m` | spin-up to the periodic cycle, slip budget and convergence figures |
 | `studies/surfaceTimeseries.m` | surface velocity and displacement over the periodic cycle along a trench-normal profile |
-| `studies/linvisCycle.m` | analytic linear viscous cycle vs the RSF cycle |
-| `studies/klModes.m` | leading KL modes on the creeping patches for several correlation lengths |
 | `studies/stochasticSequence.m` | stochastic sequence of three jittered square events per 150 yr cycle on a fault without a locked zone; `stochasticSequenceCompare.m` makes the figures (coupling spin-up, variability, memory) |
 | `studies/plotLockedAsperity.m` | plots the mesh and locked region |
 
@@ -177,7 +163,7 @@ Meshes:
 /Applications/MATLAB_R2025a.app/bin/matlab -batch "run('tests/runAllTests.m')"
 ```
 
-78 tests cover:
+The tests cover:
 - sign and axis conventions;
 - kernel caching;
 - the friction laws and the damped inverse;
@@ -186,8 +172,7 @@ Meshes:
 - convergence to the boundary-element steady state;
 - imposed events (traction balance, reversal, stress-drop solve);
 - cycle spin-up (slip-budget closure, independence of the starting state);
-- surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity);
-- the analytic linear viscous model (against `ode45`, a numerically spun-up cycle, the iterated cycle map and the slip budget);
-- the KL basis for low-rank viscosity fields.
+- event sequences (a single event as a sequence of one, a periodic supercycle closing the budget, one pass without a locked zone, dense output);
+- surface deformation (kernel signs, long-term removal, displacement as the time integral of velocity).
 
 The suite takes about a minute.
